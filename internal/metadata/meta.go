@@ -19,6 +19,7 @@ const (
 	CmdExecResult = ":execresult"
 	CmdExecRows   = ":execrows"
 	CmdMany       = ":many"
+	CmdIter       = ":iter"
 	CmdOne        = ":one"
 )
 
@@ -63,7 +64,7 @@ func Parse(t string, commentStyle CommentSyntax) (string, string, error) {
 		queryName := part[2]
 		queryType := strings.TrimSpace(part[3])
 		switch queryType {
-		case CmdOne, CmdMany, CmdExec, CmdExecResult, CmdExecRows:
+		case CmdOne, CmdMany, CmdIter, CmdExec, CmdExecResult, CmdExecRows:
 		default:
 			return "", "", fmt.Errorf("invalid query type: %s", queryType)
 		}

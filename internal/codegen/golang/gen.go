@@ -154,6 +154,9 @@ type Querier interface {
 	{{- if eq .Cmd ":many"}}
 	{{.MethodName}}(ctx context.Context, {{.Arg.Pair}}) ([]{{.Ret.Type}}, error)
 	{{- end}}
+	{{- if eq .Cmd ":iter"}}
+	{{.MethodName}}(ctx context.Context, iter func({{.Ret.Name}} {{.Ret.Type}}) error, {{.Arg.Pair}}) error
+	{{- end}}
 	{{- if eq .Cmd ":exec"}}
 	{{.MethodName}}(ctx context.Context, {{.Arg.Pair}}) error
 	{{- end}}
@@ -302,6 +305,40 @@ func (q *Queries) {{.MethodName}}(ctx context.Context, {{.Arg.Pair}}) ([]{{.Ret.
 		return nil, err
 	}
 	return items, nil
+}
+{{end}}
+
+{{if eq .Cmd ":iter"}}
+{{range .Comments}}//{{.}}
+{{end -}}
+
+func (q *Queries) {{.MethodName}}(ctx context.Context, iter func({{.Ret.Name}} {{.Ret.Type}}) error, {{.Arg.Pair}}) error {
+  	{{- if $.EmitPreparedQueries}}
+	rows, err := q.query(ctx, q.{{.FieldName}}, {{.ConstantName}}, {{.Arg.Params}})
+  	{{- else}}
+	rows, err := q.db.QueryContext(ctx, {{.ConstantName}}, {{.Arg.Params}})
+  	{{- end}}
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var {{.Ret.Name}} {{.Ret.Type}}
+		if err := rows.Scan({{.Ret.Scan}}); err != nil {
+			return err
+		}
+		err = iter(i)
+		if err != nil {
+			return err
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	return nil
 }
 {{end}}
 
