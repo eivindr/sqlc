@@ -564,13 +564,13 @@ func TestUpdate(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			c := NewCatalog()
+			c := newTestCatalog()
 			if err := c.Build(stmts); err != nil {
 				t.Log(test.stmt)
 				t.Fatal(err)
 			}
 
-			e := NewCatalog()
+			e := newTestCatalog()
 			if test.s != nil {
 				var replaced bool
 				for i := range e.Schemas {
@@ -585,7 +585,7 @@ func TestUpdate(t *testing.T) {
 				}
 			}
 
-			if diff := cmp.Diff(e, c, cmpopts.EquateEmpty()); diff != "" {
+			if diff := cmp.Diff(e.Schemas, c.Schemas, cmpopts.EquateEmpty()); diff != "" {
 				t.Log(test.stmt)
 				t.Errorf("catalog mismatch:\n%s", diff)
 			}

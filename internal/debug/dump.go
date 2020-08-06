@@ -1,9 +1,19 @@
 package debug
 
 import (
+	"os"
+
 	"github.com/davecgh/go-spew/spew"
 )
 
-func Dump(n interface{}) {
-	spew.Dump(n)
+var Active bool
+
+func init() {
+	Active = os.Getenv("SQLCDEBUG") != ""
+}
+
+func Dump(n ...interface{}) {
+	if Active {
+		spew.Dump(n)
+	}
 }

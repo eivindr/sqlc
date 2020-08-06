@@ -37,7 +37,7 @@ func TestBooks(t *testing.T) {
 		AuthorID:  a.AuthorID,
 		Isbn:      "1",
 		Title:     "my book title",
-		Booktype:  BookTypeFICTION,
+		BookType:  BookTypeFICTION,
 		Year:      2016,
 		Available: now,
 		Tags:      []string{},
@@ -51,7 +51,7 @@ func TestBooks(t *testing.T) {
 		AuthorID:  a.AuthorID,
 		Isbn:      "2",
 		Title:     "the second book",
-		Booktype:  BookTypeFICTION,
+		BookType:  BookTypeFICTION,
 		Year:      2016,
 		Available: now,
 		Tags:      []string{"cool", "unique"},
@@ -75,7 +75,7 @@ func TestBooks(t *testing.T) {
 		AuthorID:  a.AuthorID,
 		Isbn:      "3",
 		Title:     "the third book",
-		Booktype:  BookTypeFICTION,
+		BookType:  BookTypeFICTION,
 		Year:      2001,
 		Available: now,
 		Tags:      []string{"cool"},
@@ -89,7 +89,7 @@ func TestBooks(t *testing.T) {
 		AuthorID:  a.AuthorID,
 		Isbn:      "4",
 		Title:     "4th place finisher",
-		Booktype:  BookTypeNONFICTION,
+		BookType:  BookTypeNONFICTION,
 		Year:      2011,
 		Available: now,
 		Tags:      []string{"other"},
@@ -124,7 +124,7 @@ func TestBooks(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, book := range books0 {
-		t.Logf("Book %d (%s): %s available: %s\n", book.BookID, book.Booktype, book.Title, book.Available.Format(time.RFC822Z))
+		t.Logf("Book %d (%s): %s available: %s\n", book.BookID, book.BookType, book.Title, book.Available.Format(time.RFC822Z))
 		author, err := dq.GetAuthor(ctx, book.AuthorID)
 		if err != nil {
 			t.Fatal(err)

@@ -97,17 +97,25 @@ func outputColumns(qc *QueryCatalog, node ast.Node) ([]*Column, error) {
 			}
 
 		case *pg.CoalesceExpr:
+			var found bool
 			for _, arg := range n.Args.Items {
+				if found {
+					continue
+				}
 				if ref, ok := arg.(*pg.ColumnRef); ok {
 					columns, err := outputColumnRefs(res, tables, ref)
 					if err != nil {
 						return nil, err
 					}
 					for _, c := range columns {
+						found = true
 						c.NotNull = true
 						cols = append(cols, c)
 					}
 				}
+			}
+			if !found {
+				cols = append(cols, &Column{Name: "coalesce", DataType: "any", NotNull: false})
 			}
 
 		case *pg.ColumnRef:
@@ -149,7 +157,7 @@ func outputColumns(qc *QueryCatalog, node ast.Node) ([]*Column, error) {
 			if res.Name != nil {
 				name = *res.Name
 			}
-			fun, err := qc.catalog.GetFuncN(rel, len(n.Args.Items))
+			fun, err := qc.catalog.ResolveFuncCall(n)
 			if err == nil {
 				cols = append(cols, &Column{Name: name, DataType: dataType(fun.ReturnType), NotNull: true})
 			} else {

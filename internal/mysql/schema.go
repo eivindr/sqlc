@@ -55,15 +55,28 @@ func tableColReferences(col *sqlparser.ColName, defaultTable string, tableAliasM
 }
 
 // Add add a MySQL table definition to the schema map
-func (s *Schema) Add(ddl *sqlparser.DDL) {
+func (s *Schema) Add(ddl *sqlparser.DDL) error {
 	switch ddl.Action {
 	case "create":
 		name := ddl.Table.Name.String()
 		if ddl.TableSpec == nil {
-			panic(fmt.Sprintf("failed to parse table \"%s\" schema.", name))
+			return fmt.Errorf("failed to parse table \"%s\" schema", name)
 		}
 		s.tables[name] = ddl.TableSpec.Columns
+	case "rename":
+		if len(ddl.FromTables) != 1 || len(ddl.ToTables) != 1 {
+			return fmt.Errorf("rename without one 'from' table and one 'to' table: %#v", ddl)
+		}
+		from := ddl.FromTables[0].Name.String()
+		to := ddl.ToTables[0].Name.String()
+		cols, ok := s.tables[from]
+		if !ok {
+			return fmt.Errorf("unknown existing table %q", from)
+		}
+		delete(s.tables, from)
+		s.tables[to] = cols
 	}
+	return nil
 }
 
 func (s *Schema) schemaLookup(table string, col string) (*Column, error) {
