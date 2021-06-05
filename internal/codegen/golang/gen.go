@@ -26,7 +26,7 @@ package {{.Package}}
 
 import (
 	{{range imports .SourceName}}
-	{{range .}}"{{.}}"
+	{{range .}}{{.}}
 	{{end}}
 	{{end}}
 )
@@ -137,7 +137,7 @@ package {{.Package}}
 
 import (
 	{{range imports .SourceName}}
-	{{range .}}"{{.}}"
+	{{range .}}{{.}}
 	{{end}}
 	{{end}}
 )
@@ -178,7 +178,7 @@ package {{.Package}}
 
 import (
 	{{range imports .SourceName}}
-	{{range .}}"{{.}}"
+	{{range .}}{{.}}
 	{{end}}
 	{{end}}
 )
@@ -216,7 +216,7 @@ type {{.Name}} struct { {{- range .Fields}}
   {{- if .Comment}}
   {{comment .Comment}}{{else}}
   {{- end}}
-  {{.Name}} {{.Type}} {{if $.EmitJSONTags}}{{$.Q}}{{.Tag}}{{$.Q}}{{end}}
+  {{.Name}} {{.Type}} {{if or ($.EmitJSONTags) ($.EmitDBTags)}}{{$.Q}}{{.Tag}}{{$.Q}}{{end}}
   {{- end}}
 }
 {{end}}
@@ -229,7 +229,7 @@ package {{.Package}}
 
 import (
 	{{range imports .SourceName}}
-	{{range .}}"{{.}}"
+	{{range .}}{{.}}
 	{{end}}
 	{{end}}
 )
@@ -246,14 +246,14 @@ const {{.ConstantName}} = {{$.Q}}-- name: {{.MethodName}} {{.Cmd}}
 
 {{if .Arg.EmitStruct}}
 type {{.Arg.Type}} struct { {{- range .Arg.Struct.Fields}}
-  {{.Name}} {{.Type}} {{if $.EmitJSONTags}}{{$.Q}}{{.Tag}}{{$.Q}}{{end}}
+  {{.Name}} {{.Type}} {{if or ($.EmitJSONTags) ($.EmitDBTags)}}{{$.Q}}{{.Tag}}{{$.Q}}{{end}}
   {{- end}}
 }
 {{end}}
 
 {{if .Ret.EmitStruct}}
 type {{.Ret.Type}} struct { {{- range .Ret.Struct.Fields}}
-  {{.Name}} {{.Type}} {{if $.EmitJSONTags}}{{$.Q}}{{.Tag}}{{$.Q}}{{end}}
+  {{.Name}} {{.Type}} {{if or ($.EmitJSONTags) ($.EmitDBTags)}}{{$.Q}}{{.Tag}}{{$.Q}}{{end}}
   {{- end}}
 }
 {{end}}
@@ -399,6 +399,7 @@ type tmplCtx struct {
 	SourceName string
 
 	EmitJSONTags        bool
+	EmitDBTags          bool
 	EmitPreparedQueries bool
 	EmitInterface       bool
 	EmitEmptySlices     bool
@@ -406,10 +407,6 @@ type tmplCtx struct {
 
 func (t *tmplCtx) OutputQuery(sourceName string) bool {
 	return t.SourceName == sourceName
-}
-
-func DeprecatedGenerate(r Generateable, settings config.CombinedSettings) (map[string]string, error) {
-	return generate(settings, r.Enums(settings), r.Structs(settings), r.GoQueries(settings))
 }
 
 func Generate(r *compiler.Result, settings config.CombinedSettings) (map[string]string, error) {
@@ -441,6 +438,7 @@ func generate(settings config.CombinedSettings, enums []Enum, structs []Struct, 
 		Settings:            settings.Global,
 		EmitInterface:       golang.EmitInterface,
 		EmitJSONTags:        golang.EmitJSONTags,
+		EmitDBTags:          golang.EmitDBTags,
 		EmitPreparedQueries: golang.EmitPreparedQueries,
 		EmitEmptySlices:     golang.EmitEmptySlices,
 		Q:                   "`",
@@ -466,6 +464,11 @@ func generate(settings config.CombinedSettings, enums []Enum, structs []Struct, 
 			fmt.Println(b.String())
 			return fmt.Errorf("source error: %w", err)
 		}
+
+		if templateName == "queryFile" && golang.OutputFilesSuffix != "" {
+			name += golang.OutputFilesSuffix
+		}
+
 		if !strings.HasSuffix(name, ".go") {
 			name += ".go"
 		}
@@ -473,14 +476,27 @@ func generate(settings config.CombinedSettings, enums []Enum, structs []Struct, 
 		return nil
 	}
 
-	if err := execute("db.go", "dbFile"); err != nil {
+	dbFileName := "db.go"
+	if golang.OutputDBFileName != "" {
+		dbFileName = golang.OutputDBFileName
+	}
+	modelsFileName := "models.go"
+	if golang.OutputModelsFileName != "" {
+		modelsFileName = golang.OutputModelsFileName
+	}
+	querierFileName := "querier.go"
+	if golang.OutputQuerierFileName != "" {
+		querierFileName = golang.OutputQuerierFileName
+	}
+
+	if err := execute(dbFileName, "dbFile"); err != nil {
 		return nil, err
 	}
-	if err := execute("models.go", "modelsFile"); err != nil {
+	if err := execute(modelsFileName, "modelsFile"); err != nil {
 		return nil, err
 	}
 	if golang.EmitInterface {
-		if err := execute("querier.go", "interfaceFile"); err != nil {
+		if err := execute(querierFileName, "interfaceFile"); err != nil {
 			return nil, err
 		}
 	}

@@ -34,12 +34,18 @@ func buildEnums(r *compiler.Result, settings config.CombinedSettings) []Enum {
 				Name:    StructName(enumName, settings),
 				Comment: enum.Comment,
 			}
-			for _, v := range enum.Vals {
+			seen := make(map[string]struct{}, len(enum.Vals))
+			for i, v := range enum.Vals {
+				value := EnumReplace(v)
+				if _, found := seen[value]; found || value == "" {
+					value = fmt.Sprintf("value_%d", i)
+				}
 				e.Constants = append(e.Constants, Constant{
-					Name:  StructName(enumName+"_"+EnumReplace(v), settings),
+					Name:  StructName(enumName+"_"+value, settings),
 					Value: v,
 					Type:  e.Name,
 				})
+				seen[value] = struct{}{}
 			}
 			enums = append(enums, e)
 		}
@@ -73,10 +79,17 @@ func buildStructs(r *compiler.Result, settings config.CombinedSettings) []Struct
 				Comment: table.Comment,
 			}
 			for _, column := range table.Columns {
+				tags := map[string]string{}
+				if settings.Go.EmitDBTags {
+					tags["db:"] = column.Name
+				}
+				if settings.Go.EmitJSONTags {
+					tags["json:"] = JSONTagName(column.Name, settings)
+				}
 				s.Fields = append(s.Fields, Field{
 					Name:    StructName(column.Name, settings),
 					Type:    goType(r, compiler.ConvertColumn(table.Rel, column), settings),
-					Tags:    map[string]string{"json:": column.Name},
+					Tags:    tags,
 					Comment: column.Comment,
 				})
 			}
@@ -247,10 +260,17 @@ func columnsToStruct(r *compiler.Result, name string, columns []goColumn, settin
 			tagName = fmt.Sprintf("%s_%d", tagName, suffix)
 			fieldName = fmt.Sprintf("%s_%d", fieldName, suffix)
 		}
+		tags := map[string]string{}
+		if settings.Go.EmitDBTags {
+			tags["db:"] = tagName
+		}
+		if settings.Go.EmitJSONTags {
+			tags["json:"] = JSONTagName(tagName, settings)
+		}
 		gs.Fields = append(gs.Fields, Field{
 			Name: fieldName,
 			Type: goType(r, c.Column, settings),
-			Tags: map[string]string{"json:": tagName},
+			Tags: tags,
 		})
 		seen[colName]++
 	}

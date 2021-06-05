@@ -1,8 +1,9 @@
 package compiler
 
 import (
+	"fmt"
+
 	"github.com/kyleconroy/sqlc/internal/sql/ast"
-	"github.com/kyleconroy/sqlc/internal/sql/ast/pg"
 	"github.com/kyleconroy/sqlc/internal/sql/catalog"
 )
 
@@ -12,13 +13,13 @@ type QueryCatalog struct {
 }
 
 func buildQueryCatalog(c *catalog.Catalog, node ast.Node) (*QueryCatalog, error) {
-	var with *pg.WithClause
+	var with *ast.WithClause
 	switch n := node.(type) {
-	case *pg.InsertStmt:
+	case *ast.InsertStmt:
 		with = n.WithClause
-	case *pg.UpdateStmt:
+	case *ast.UpdateStmt:
 		with = n.WithClause
-	case *pg.SelectStmt:
+	case *ast.SelectStmt:
 		with = n.WithClause
 	default:
 		with = nil
@@ -26,7 +27,7 @@ func buildQueryCatalog(c *catalog.Catalog, node ast.Node) (*QueryCatalog, error)
 	qc := &QueryCatalog{catalog: c, ctes: map[string]*Table{}}
 	if with != nil {
 		for _, item := range with.Ctes.Items {
-			if cte, ok := item.(*pg.CommonTableExpr); ok {
+			if cte, ok := item.(*ast.CommonTableExpr); ok {
 				cols, err := outputColumns(qc, cte.Ctequery)
 				if err != nil {
 					return nil, err
@@ -53,6 +54,7 @@ func ConvertColumn(rel *ast.TableName, c *catalog.Column) *Column {
 		NotNull:  c.IsNotNull,
 		IsArray:  c.IsArray,
 		Type:     &c.Type,
+		Length:   c.Length,
 	}
 }
 
@@ -70,4 +72,18 @@ func (qc QueryCatalog) GetTable(rel *ast.TableName) (*Table, error) {
 		cols = append(cols, ConvertColumn(rel, c))
 	}
 	return &Table{Rel: rel, Columns: cols}, nil
+}
+
+func (qc QueryCatalog) GetFunc(rel *ast.FuncName) (*Function, error) {
+	funcs, err := qc.catalog.ListFuncsByName(rel)
+	if err != nil {
+		return nil, err
+	}
+	if len(funcs) == 0 {
+		return nil, fmt.Errorf("function not found: %s", rel.Name)
+	}
+	return &Function{
+		Rel:        rel,
+		ReturnType: funcs[0].ReturnType,
+	}, nil
 }

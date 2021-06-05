@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"go/types"
 	"io"
 	"os"
 	"strings"
@@ -71,7 +70,6 @@ func (p *Paths) UnmarshalYAML(unmarshal func(interface{}) error) error {
 
 const (
 	EngineMySQL      Engine = "mysql"
-	EngineMySQLBeta  Engine = "mysql:beta"
 	EnginePostgreSQL Engine = "postgresql"
 
 	// Experimental engines
@@ -108,18 +106,25 @@ type SQL struct {
 type SQLGen struct {
 	Go     *SQLGo     `json:"go,omitempty" yaml:"go"`
 	Kotlin *SQLKotlin `json:"kotlin,omitempty" yaml:"kotlin"`
+	Python *SQLPython `json:"python,omitempty" yaml:"python"`
 }
 
 type SQLGo struct {
-	EmitInterface       bool              `json:"emit_interface" yaml:"emit_interface"`
-	EmitJSONTags        bool              `json:"emit_json_tags" yaml:"emit_json_tags"`
-	EmitPreparedQueries bool              `json:"emit_prepared_queries" yaml:"emit_prepared_queries"`
-	EmitExactTableNames bool              `json:"emit_exact_table_names,omitempty" yaml:"emit_exact_table_names"`
-	EmitEmptySlices     bool              `json:"emit_empty_slices,omitempty" yaml:"emit_empty_slices"`
-	Package             string            `json:"package" yaml:"package"`
-	Out                 string            `json:"out" yaml:"out"`
-	Overrides           []Override        `json:"overrides,omitempty" yaml:"overrides"`
-	Rename              map[string]string `json:"rename,omitempty" yaml:"rename"`
+	EmitInterface         bool              `json:"emit_interface" yaml:"emit_interface"`
+	EmitJSONTags          bool              `json:"emit_json_tags" yaml:"emit_json_tags"`
+	EmitDBTags            bool              `json:"emit_db_tags" yaml:"emit_db_tags"`
+	EmitPreparedQueries   bool              `json:"emit_prepared_queries" yaml:"emit_prepared_queries"`
+	EmitExactTableNames   bool              `json:"emit_exact_table_names,omitempty" yaml:"emit_exact_table_names"`
+	EmitEmptySlices       bool              `json:"emit_empty_slices,omitempty" yaml:"emit_empty_slices"`
+	JSONTagsCaseStyle     string            `json:"json_tags_case_style,omitempty" yaml:"json_tags_case_style"`
+	Package               string            `json:"package" yaml:"package"`
+	Out                   string            `json:"out" yaml:"out"`
+	Overrides             []Override        `json:"overrides,omitempty" yaml:"overrides"`
+	Rename                map[string]string `json:"rename,omitempty" yaml:"rename"`
+	OutputDBFileName      string            `json:"output_db_file_name,omitempty" yaml:"output_db_file_name"`
+	OutputModelsFileName  string            `json:"output_models_file_name,omitempty" yaml:"output_models_file_name"`
+	OutputQuerierFileName string            `json:"output_querier_file_name,omitempty" yaml:"output_querier_file_name"`
+	OutputFilesSuffix     string            `json:"output_files_suffix,omitempty" yaml:"output_files_suffix"`
 }
 
 type SQLKotlin struct {
@@ -128,9 +133,21 @@ type SQLKotlin struct {
 	Out                 string `json:"out" yaml:"out"`
 }
 
+type SQLPython struct {
+	EmitExactTableNames bool       `json:"emit_exact_table_names" yaml:"emit_exact_table_names"`
+	EmitSyncQuerier     bool       `json:"emit_sync_querier" yaml:"emit_sync_querier"`
+	EmitAsyncQuerier    bool       `json:"emit_async_querier" yaml:"emit_async_querier"`
+	Package             string     `json:"package" yaml:"package"`
+	Out                 string     `json:"out" yaml:"out"`
+	Overrides           []Override `json:"overrides,omitempty" yaml:"overrides"`
+}
+
 type Override struct {
 	// name of the golang type to use, e.g. `github.com/segmentio/ksuid.KSUID`
-	GoType string `json:"go_type" yaml:"go_type"`
+	GoType GoType `json:"go_type" yaml:"go_type"`
+
+	// name of the python type to use, e.g. `mymodule.TypeName`
+	PythonType PythonType `json:"python_type" yaml:"python_type"`
 
 	// fully qualified name of the Go type, e.g. `github.com/segmentio/ksuid.KSUID`
 	DBType                  string `json:"db_type" yaml:"db_type"`
@@ -147,11 +164,12 @@ type Override struct {
 	// fully qualified name of the column, e.g. `accounts.id`
 	Column string `json:"column" yaml:"column"`
 
-	ColumnName  string
-	Table       core.FQN
-	GoTypeName  string
-	GoPackage   string
-	GoBasicType bool
+	ColumnName   string
+	Table        core.FQN
+	GoImportPath string
+	GoPackage    string
+	GoTypeName   string
+	GoBasicType  bool
 }
 
 func (o *Override) Parse() error {
@@ -198,55 +216,14 @@ func (o *Override) Parse() error {
 	}
 
 	// validate GoType
-	lastDot := strings.LastIndex(o.GoType, ".")
-	lastSlash := strings.LastIndex(o.GoType, "/")
-	typename := o.GoType
-	if lastDot == -1 && lastSlash == -1 {
-		// if the type name has no slash and no dot, validate that the type is a basic Go type
-		var found bool
-		for _, typ := range types.Typ {
-			info := typ.Info()
-			if info == 0 {
-				continue
-			}
-			if info&types.IsUntyped != 0 {
-				continue
-			}
-			if typename == typ.Name() {
-				found = true
-			}
-		}
-		if !found {
-			return fmt.Errorf("Package override `go_type` specifier %q is not a Go basic type e.g. 'string'", o.GoType)
-		}
-		o.GoBasicType = true
-	} else {
-		// assume the type lives in a Go package
-		if lastDot == -1 {
-			return fmt.Errorf("Package override `go_type` specifier %q is not the proper format, expected 'package.type', e.g. 'github.com/segmentio/ksuid.KSUID'", o.GoType)
-		}
-		if lastSlash == -1 {
-			return fmt.Errorf("Package override `go_type` specifier %q is not the proper format, expected 'package.type', e.g. 'github.com/segmentio/ksuid.KSUID'", o.GoType)
-		}
-		typename = o.GoType[lastSlash+1:]
-		if strings.HasPrefix(typename, "go-") {
-			// a package name beginning with "go-" will give syntax errors in
-			// generated code. We should do the right thing and get the actual
-			// import name, but in lieu of that, stripping the leading "go-" may get
-			// us what we want.
-			typename = typename[len("go-"):]
-		}
-		if strings.HasSuffix(typename, "-go") {
-			typename = typename[:len(typename)-len("-go")]
-		}
-		o.GoPackage = o.GoType[:lastDot]
+	parsed, err := o.GoType.Parse()
+	if err != nil {
+		return err
 	}
-	o.GoTypeName = typename
-	isPointer := o.GoType[0] == '*'
-	if isPointer {
-		o.GoPackage = o.GoPackage[1:]
-		o.GoTypeName = "*" + o.GoTypeName
-	}
+	o.GoImportPath = parsed.ImportPath
+	o.GoPackage = parsed.Package
+	o.GoTypeName = parsed.TypeName
+	o.GoBasicType = parsed.BasicType
 
 	return nil
 }
@@ -258,7 +235,8 @@ var ErrUnknownEngine = errors.New("invalid engine")
 var ErrNoPackages = errors.New("no packages")
 var ErrNoPackageName = errors.New("missing package name")
 var ErrNoPackagePath = errors.New("missing package path")
-var ErrKotlinNoOutPath = errors.New("no output path")
+var ErrNoOutPath = errors.New("no output path")
+var ErrNoQuerierType = errors.New("no querier emit type enabled")
 
 func ParseConfig(rd io.Reader) (Config, error) {
 	var buf bytes.Buffer
@@ -288,6 +266,7 @@ type CombinedSettings struct {
 	Package   SQL
 	Go        SQLGo
 	Kotlin    SQLKotlin
+	Python    SQLPython
 	Rename    map[string]string
 	Overrides []Override
 }
@@ -310,6 +289,10 @@ func Combine(conf Config, pkg SQL) CombinedSettings {
 	}
 	if pkg.Gen.Kotlin != nil {
 		cs.Kotlin = *pkg.Gen.Kotlin
+	}
+	if pkg.Gen.Python != nil {
+		cs.Python = *pkg.Gen.Python
+		cs.Overrides = append(cs.Overrides, pkg.Gen.Python.Overrides...)
 	}
 	return cs
 }

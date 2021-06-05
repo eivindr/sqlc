@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/kyleconroy/sqlc/internal/sql/ast"
 	"github.com/kyleconroy/sqlc/internal/sql/sqlerr"
@@ -73,11 +74,12 @@ func (c *Catalog) alterTable(stmt *ast.AlterTableStmt) error {
 					Type:      *cmd.Def.TypeName,
 					IsNotNull: cmd.Def.IsNotNull,
 					IsArray:   cmd.Def.IsArray,
+					Length:    cmd.Def.Length,
 				})
 
 			case ast.AT_AlterColumnType:
 				table.Columns[idx].Type = *cmd.Def.TypeName
-				// table.Columns[idx].IsArray = isArray(d.TypeName)
+				table.Columns[idx].IsArray = cmd.Def.IsArray
 
 			case ast.AT_DropColumn:
 				table.Columns = append(table.Columns[:idx], table.Columns[idx+1:]...)
@@ -135,14 +137,44 @@ func (c *Catalog) createTable(stmt *ast.CreateTableStmt) error {
 	} else if err == nil {
 		return sqlerr.RelationExists(stmt.Name.Name)
 	}
-	tbl := Table{Rel: stmt.Name}
-	for _, col := range stmt.Cols {
-		tbl.Columns = append(tbl.Columns, &Column{
-			Name:      col.Colname,
-			Type:      *col.TypeName,
-			IsNotNull: col.IsNotNull,
-			IsArray:   col.IsArray,
-		})
+
+	tbl := Table{Rel: stmt.Name, Comment: stmt.Comment}
+
+	if stmt.ReferTable != nil && len(stmt.Cols) != 0 {
+		return errors.New("create table node cannot have both a ReferTable and Cols")
+	}
+
+	if stmt.ReferTable != nil {
+		_, original, err := c.getTable(stmt.ReferTable)
+		if err != nil {
+			return err
+		}
+		for _, col := range original.Columns {
+			newCol := *col // make a copy, so changes to the ReferTable don't propagate
+			tbl.Columns = append(tbl.Columns, &newCol)
+		}
+	} else {
+		for _, col := range stmt.Cols {
+			tc := &Column{
+				Name:      col.Colname,
+				Type:      *col.TypeName,
+				IsNotNull: col.IsNotNull,
+				IsArray:   col.IsArray,
+				Comment:   col.Comment,
+				Length:    col.Length,
+			}
+			if col.Vals != nil {
+				typeName := ast.TypeName{
+					Name: fmt.Sprintf("%s_%s", stmt.Name.Name, col.Colname),
+				}
+				s := &ast.CreateEnumStmt{TypeName: &typeName, Vals: col.Vals}
+				if err := c.createEnum(s); err != nil {
+					return err
+				}
+				tc.Type = typeName
+			}
+			tbl.Columns = append(tbl.Columns, tc)
+		}
 	}
 	schema.Tables = append(schema.Tables, &tbl)
 	return nil

@@ -5,15 +5,14 @@ import (
 	"fmt"
 
 	"github.com/kyleconroy/sqlc/internal/sql/ast"
-	"github.com/kyleconroy/sqlc/internal/sql/ast/pg"
 	"github.com/kyleconroy/sqlc/internal/sql/astutils"
 	"github.com/kyleconroy/sqlc/internal/sql/lang"
 	"github.com/kyleconroy/sqlc/internal/sql/sqlerr"
 )
 
-func hasStarRef(cf *pg.ColumnRef) bool {
+func hasStarRef(cf *ast.ColumnRef) bool {
 	for _, item := range cf.Fields.Items {
-		if _, ok := item.(*pg.A_Star); ok {
+		if _, ok := item.(*ast.A_Star); ok {
 			return true
 		}
 	}
@@ -32,15 +31,20 @@ func outputColumns(qc *QueryCatalog, node ast.Node) ([]*Column, error) {
 
 	var targets *ast.List
 	switch n := node.(type) {
-	case *pg.DeleteStmt:
+	case *ast.DeleteStmt:
 		targets = n.ReturningList
-	case *pg.InsertStmt:
+	case *ast.InsertStmt:
 		targets = n.ReturningList
-	case *pg.SelectStmt:
+	case *ast.SelectStmt:
 		targets = n.TargetList
-	case *pg.TruncateStmt:
+		// For UNION queries, targets is empty and we need to look for the
+		// columns in Largs.
+		if len(targets.Items) == 0 && n.Larg != nil {
+			return outputColumns(qc, n.Larg)
+		}
+	case *ast.TruncateStmt:
 		targets = &ast.List{}
-	case *pg.UpdateStmt:
+	case *ast.UpdateStmt:
 		targets = n.ReturningList
 	default:
 		return nil, fmt.Errorf("outputColumns: unsupported node type: %T", n)
@@ -49,13 +53,13 @@ func outputColumns(qc *QueryCatalog, node ast.Node) ([]*Column, error) {
 	var cols []*Column
 
 	for _, target := range targets.Items {
-		res, ok := target.(*pg.ResTarget)
+		res, ok := target.(*ast.ResTarget)
 		if !ok {
 			continue
 		}
 		switch n := res.Val.(type) {
 
-		case *pg.A_Expr:
+		case *ast.A_Expr:
 			name := ""
 			if res.Name != nil {
 				name = *res.Name
@@ -65,24 +69,23 @@ func outputColumns(qc *QueryCatalog, node ast.Node) ([]*Column, error) {
 				// TODO: Generate a name for these operations
 				cols = append(cols, &Column{Name: name, DataType: "bool", NotNull: true})
 			case lang.IsMathematicalOperator(astutils.Join(n.Name, "")):
-				// TODO: Generate correct numeric type
-				cols = append(cols, &Column{Name: name, DataType: "pg_catalog.int4", NotNull: true})
+				cols = append(cols, &Column{Name: name, DataType: "int", NotNull: true})
 			default:
 				cols = append(cols, &Column{Name: name, DataType: "any", NotNull: false})
 			}
 
-		case *pg.CaseExpr:
+		case *ast.CaseExpr:
 			name := ""
 			if res.Name != nil {
 				name = *res.Name
 			}
 			// TODO: The TypeCase code has been copied from below. Instead, we need a recurse function to get the type of a node.
-			if tc, ok := n.Defresult.(*pg.TypeCast); ok {
+			if tc, ok := n.Defresult.(*ast.TypeCast); ok {
 				if tc.TypeName == nil {
 					return nil, errors.New("no type name type cast")
 				}
 				name := ""
-				if ref, ok := tc.Arg.(*pg.ColumnRef); ok {
+				if ref, ok := tc.Arg.(*ast.ColumnRef); ok {
 					name = astutils.Join(ref.Fields, "_")
 				}
 				if res.Name != nil {
@@ -96,13 +99,13 @@ func outputColumns(qc *QueryCatalog, node ast.Node) ([]*Column, error) {
 				cols = append(cols, &Column{Name: name, DataType: "any", NotNull: false})
 			}
 
-		case *pg.CoalesceExpr:
+		case *ast.CoalesceExpr:
 			var found bool
 			for _, arg := range n.Args.Items {
 				if found {
 					continue
 				}
-				if ref, ok := arg.(*pg.ColumnRef); ok {
+				if ref, ok := arg.(*ast.ColumnRef); ok {
 					columns, err := outputColumnRefs(res, tables, ref)
 					if err != nil {
 						return nil, err
@@ -118,7 +121,7 @@ func outputColumns(qc *QueryCatalog, node ast.Node) ([]*Column, error) {
 				cols = append(cols, &Column{Name: "coalesce", DataType: "any", NotNull: false})
 			}
 
-		case *pg.ColumnRef:
+		case *ast.ColumnRef:
 			if hasStarRef(n) {
 				// TODO: This code is copied in func expand()
 				for _, t := range tables {
@@ -139,6 +142,7 @@ func outputColumns(qc *QueryCatalog, node ast.Node) ([]*Column, error) {
 							DataType: c.DataType,
 							NotNull:  c.NotNull,
 							IsArray:  c.IsArray,
+							Length:   c.Length,
 						})
 					}
 				}
@@ -164,24 +168,24 @@ func outputColumns(qc *QueryCatalog, node ast.Node) ([]*Column, error) {
 				cols = append(cols, &Column{Name: name, DataType: "any"})
 			}
 
-		case *pg.SubLink:
+		case *ast.SubLink:
 			name := "exists"
 			if res.Name != nil {
 				name = *res.Name
 			}
 			switch n.SubLinkType {
-			case pg.EXISTS_SUBLINK:
+			case ast.EXISTS_SUBLINK:
 				cols = append(cols, &Column{Name: name, DataType: "bool", NotNull: true})
 			default:
 				cols = append(cols, &Column{Name: name, DataType: "any", NotNull: false})
 			}
 
-		case *pg.TypeCast:
+		case *ast.TypeCast:
 			if n.TypeName == nil {
 				return nil, errors.New("no type name type cast")
 			}
 			name := ""
-			if ref, ok := n.Arg.(*pg.ColumnRef); ok {
+			if ref, ok := n.Arg.(*ast.ColumnRef); ok {
 				name = astutils.Join(ref.Fields, "_")
 			}
 			if res.Name != nil {
@@ -201,7 +205,56 @@ func outputColumns(qc *QueryCatalog, node ast.Node) ([]*Column, error) {
 
 		}
 	}
+
+	if n, ok := node.(*ast.SelectStmt); ok {
+		for _, col := range cols {
+			if !col.NotNull || col.Table == nil {
+				continue
+			}
+			for _, f := range n.FromClause.Items {
+				if res := isTableRequired(f, col.Table.Name, tableRequired); res != tableNotFound {
+					col.NotNull = res == tableRequired
+					break
+				}
+			}
+		}
+	}
+
 	return cols, nil
+}
+
+const (
+	tableNotFound = iota
+	tableRequired
+	tableOptional
+)
+
+func isTableRequired(n ast.Node, tableName string, prior int) int {
+	switch n := n.(type) {
+	case *ast.RangeVar:
+		if *n.Relname == tableName {
+			return prior
+		}
+	case *ast.JoinExpr:
+		helper := func(l, r int) int {
+			if res := isTableRequired(n.Larg, tableName, l); res != tableNotFound {
+				return res
+			}
+			if res := isTableRequired(n.Rarg, tableName, r); res != tableNotFound {
+				return res
+			}
+			return tableNotFound
+		}
+		switch n.Jointype {
+		case ast.JoinTypeLeft:
+			return helper(tableRequired, tableOptional)
+		case ast.JoinTypeRight:
+			return helper(tableOptional, tableRequired)
+		case ast.JoinTypeFull:
+			return helper(tableOptional, tableOptional)
+		}
+	}
+	return tableNotFound
 }
 
 // Compute the output columns for a statement.
@@ -213,29 +266,29 @@ func outputColumns(qc *QueryCatalog, node ast.Node) ([]*Column, error) {
 func sourceTables(qc *QueryCatalog, node ast.Node) ([]*Table, error) {
 	var list *ast.List
 	switch n := node.(type) {
-	case *pg.DeleteStmt:
+	case *ast.DeleteStmt:
 		list = &ast.List{
 			Items: []ast.Node{n.Relation},
 		}
-	case *pg.InsertStmt:
+	case *ast.InsertStmt:
 		list = &ast.List{
 			Items: []ast.Node{n.Relation},
 		}
-	case *pg.SelectStmt:
+	case *ast.SelectStmt:
 		list = astutils.Search(n.FromClause, func(node ast.Node) bool {
 			switch node.(type) {
-			case *pg.RangeVar, *pg.RangeSubselect:
+			case *ast.RangeVar, *ast.RangeSubselect, *ast.FuncName:
 				return true
 			default:
 				return false
 			}
 		})
-	case *pg.TruncateStmt:
+	case *ast.TruncateStmt:
 		list = astutils.Search(n.Relations, func(node ast.Node) bool {
-			_, ok := node.(*pg.RangeVar)
+			_, ok := node.(*ast.RangeVar)
 			return ok
 		})
-	case *pg.UpdateStmt:
+	case *ast.UpdateStmt:
 		list = &ast.List{
 			Items: append(n.FromClause.Items, n.Relation),
 		}
@@ -246,7 +299,25 @@ func sourceTables(qc *QueryCatalog, node ast.Node) ([]*Table, error) {
 	var tables []*Table
 	for _, item := range list.Items {
 		switch n := item.(type) {
-		case *pg.RangeSubselect:
+
+		case *ast.FuncName:
+			// If the function or table can't be found, don't error out.  There
+			// are many queries that depend on functions unknown to sqlc.
+			fn, err := qc.GetFunc(n)
+			if err != nil {
+				continue
+			}
+			table, err := qc.GetTable(&ast.TableName{
+				Catalog: fn.ReturnType.Catalog,
+				Schema:  fn.ReturnType.Schema,
+				Name:    fn.ReturnType.Name,
+			})
+			if err != nil {
+				continue
+			}
+			tables = append(tables, table)
+
+		case *ast.RangeSubselect:
 			cols, err := outputColumns(qc, n.Subquery)
 			if err != nil {
 				return nil, err
@@ -258,7 +329,7 @@ func sourceTables(qc *QueryCatalog, node ast.Node) ([]*Table, error) {
 				Columns: cols,
 			})
 
-		case *pg.RangeVar:
+		case *ast.RangeVar:
 			fqn, err := ParseTableName(n)
 			if err != nil {
 				return nil, err
@@ -278,6 +349,7 @@ func sourceTables(qc *QueryCatalog, node ast.Node) ([]*Table, error) {
 				}
 			}
 			tables = append(tables, table)
+
 		default:
 			return nil, fmt.Errorf("sourceTable: unsupported list item type: %T", n)
 		}
@@ -285,7 +357,7 @@ func sourceTables(qc *QueryCatalog, node ast.Node) ([]*Table, error) {
 	return tables, nil
 }
 
-func outputColumnRefs(res *pg.ResTarget, tables []*Table, node *pg.ColumnRef) ([]*Column, error) {
+func outputColumnRefs(res *ast.ResTarget, tables []*Table, node *ast.ColumnRef) ([]*Column, error) {
 	parts := stringSlice(node.Fields)
 	var name, alias string
 	switch {
@@ -317,6 +389,7 @@ func outputColumnRefs(res *pg.ResTarget, tables []*Table, node *pg.ColumnRef) ([
 					DataType: c.DataType,
 					NotNull:  c.NotNull,
 					IsArray:  c.IsArray,
+					Length:   c.Length,
 				})
 			}
 		}

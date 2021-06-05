@@ -12,11 +12,11 @@ import (
 
 	"github.com/kyleconroy/sqlc/internal/codegen/golang"
 	"github.com/kyleconroy/sqlc/internal/codegen/kotlin"
+	"github.com/kyleconroy/sqlc/internal/codegen/python"
 	"github.com/kyleconroy/sqlc/internal/compiler"
 	"github.com/kyleconroy/sqlc/internal/config"
 	"github.com/kyleconroy/sqlc/internal/debug"
 	"github.com/kyleconroy/sqlc/internal/multierr"
-	"github.com/kyleconroy/sqlc/internal/mysql"
 	"github.com/kyleconroy/sqlc/internal/opts"
 )
 
@@ -45,36 +45,42 @@ type outPair struct {
 	config.SQL
 }
 
-func Generate(e Env, dir string, stderr io.Writer) (map[string]string, error) {
-	var yamlMissing, jsonMissing bool
-	yamlPath := filepath.Join(dir, "sqlc.yaml")
-	jsonPath := filepath.Join(dir, "sqlc.json")
+func Generate(e Env, dir, filename string, stderr io.Writer) (map[string]string, error) {
+	configPath := ""
+	if filename != "" {
+		configPath = filepath.Join(dir, filename)
+	} else {
+		var yamlMissing, jsonMissing bool
+		yamlPath := filepath.Join(dir, "sqlc.yaml")
+		jsonPath := filepath.Join(dir, "sqlc.json")
 
-	if _, err := os.Stat(yamlPath); os.IsNotExist(err) {
-		yamlMissing = true
-	}
-	if _, err := os.Stat(jsonPath); os.IsNotExist(err) {
-		jsonMissing = true
+		if _, err := os.Stat(yamlPath); os.IsNotExist(err) {
+			yamlMissing = true
+		}
+		if _, err := os.Stat(jsonPath); os.IsNotExist(err) {
+			jsonMissing = true
+		}
+
+		if yamlMissing && jsonMissing {
+			fmt.Fprintln(stderr, "error parsing sqlc.json: file does not exist")
+			return nil, errors.New("config file missing")
+		}
+
+		if !yamlMissing && !jsonMissing {
+			fmt.Fprintln(stderr, "error: both sqlc.json and sqlc.yaml files present")
+			return nil, errors.New("sqlc.json and sqlc.yaml present")
+		}
+
+		configPath = yamlPath
+		if yamlMissing {
+			configPath = jsonPath
+		}
 	}
 
-	if yamlMissing && jsonMissing {
-		fmt.Fprintln(stderr, "error parsing sqlc.json: file does not exist")
-		return nil, errors.New("config file missing")
-	}
-
-	if !yamlMissing && !jsonMissing {
-		fmt.Fprintln(stderr, "error parsing sqlc.json: both files present")
-		return nil, errors.New("sqlc.json and sqlc.yaml present")
-	}
-
-	configPath := yamlPath
-	if yamlMissing {
-		configPath = jsonPath
-	}
-
+	base := filepath.Base(configPath)
 	blob, err := ioutil.ReadFile(configPath)
 	if err != nil {
-		fmt.Fprintln(stderr, "error parsing sqlc.json: file does not exist")
+		fmt.Fprintf(stderr, "error parsing %s: file does not exist\n", base)
 		return nil, err
 	}
 
@@ -88,7 +94,7 @@ func Generate(e Env, dir string, stderr io.Writer) (map[string]string, error) {
 		case config.ErrNoPackages:
 			fmt.Fprintf(stderr, errMessageNoPackages)
 		}
-		fmt.Fprintf(stderr, "error parsing sqlc.json: %s\n", err)
+		fmt.Fprintf(stderr, "error parsing %s: %s\n", base, err)
 		return nil, err
 	}
 
@@ -113,6 +119,16 @@ func Generate(e Env, dir string, stderr io.Writer) (map[string]string, error) {
 			pairs = append(pairs, outPair{
 				SQL: sql,
 				Gen: config.SQLGen{Kotlin: sql.Gen.Kotlin},
+			})
+		}
+		if sql.Gen.Python != nil {
+			if !e.ExperimentalFeatures {
+				fmt.Fprintf(stderr, "error parsing %s: unknown target langauge \"python\"\n", base)
+				return nil, fmt.Errorf("unknown target language \"python\"")
+			}
+			pairs = append(pairs, outPair{
+				SQL: sql,
+				Gen: config.SQLGen{Python: sql.Gen.Python},
 			})
 		}
 	}
@@ -140,36 +156,34 @@ func Generate(e Env, dir string, stderr io.Writer) (map[string]string, error) {
 		if sql.Gen.Go != nil {
 			name = combo.Go.Package
 		} else if sql.Gen.Kotlin != nil {
-			parseOpts.UsePositionalParameters = true
+			if sql.Engine == config.EnginePostgreSQL {
+				parseOpts.UsePositionalParameters = true
+			}
 			name = combo.Kotlin.Package
+		} else if sql.Gen.Python != nil {
+			name = combo.Python.Package
+		}
+
+		result, failed := parse(e, name, dir, sql.SQL, combo, parseOpts, stderr)
+		if failed {
+			errored = true
+			break
 		}
 
 		var files map[string]string
 		var out string
-
-		// TODO: Note about how this will be going away
-		if sql.Engine == config.EngineMySQL {
-			result, errored := parseMySQL(e, name, dir, sql.SQL, combo, parseOpts, stderr)
-			if errored {
-				break
-			}
+		switch {
+		case sql.Gen.Go != nil:
 			out = combo.Go.Out
-			files, err = golang.DeprecatedGenerate(result, combo)
-		} else {
-			result, errored := parse(e, name, dir, sql.SQL, combo, parseOpts, stderr)
-			if errored {
-				break
-			}
-			switch {
-			case sql.Gen.Go != nil:
-				out = combo.Go.Out
-				files, err = golang.Generate(result, combo)
-			case sql.Gen.Kotlin != nil:
-				out = combo.Kotlin.Out
-				files, err = kotlin.Generate(result, combo)
-			default:
-				panic("missing language backend")
-			}
+			files, err = golang.Generate(result, combo)
+		case sql.Gen.Kotlin != nil:
+			out = combo.Kotlin.Out
+			files, err = kotlin.Generate(result, combo)
+		case sql.Gen.Python != nil:
+			out = combo.Python.Out
+			files, err = python.Generate(result, combo)
+		default:
+			panic("missing language backend")
 		}
 
 		if err != nil {
@@ -188,23 +202,6 @@ func Generate(e Env, dir string, stderr io.Writer) (map[string]string, error) {
 		return nil, fmt.Errorf("errored")
 	}
 	return output, nil
-}
-
-// Experimental MySQL support
-func parseMySQL(e Env, name, dir string, sql config.SQL, combo config.CombinedSettings, parserOpts opts.Parser, stderr io.Writer) (golang.Generateable, bool) {
-	q, err := mysql.GeneratePkg(name, sql.Schema, sql.Queries, combo)
-	if err != nil {
-		fmt.Fprintf(stderr, "# package %s\n", name)
-		if parserErr, ok := err.(*multierr.Error); ok {
-			for _, fileErr := range parserErr.Errs() {
-				printFileErr(stderr, dir, fileErr)
-			}
-		} else {
-			fmt.Fprintf(stderr, "error parsing schema: %s\n", err)
-		}
-		return nil, true
-	}
-	return q, false
 }
 
 func parse(e Env, name, dir string, sql config.SQL, combo config.CombinedSettings, parserOpts opts.Parser, stderr io.Writer) (*compiler.Result, bool) {

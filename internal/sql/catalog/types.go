@@ -80,7 +80,7 @@ func (c *Catalog) alterTypeRenameValue(stmt *ast.AlterTypeRenameValueStmt) error
 	}
 	enum, ok := typ.(*Enum)
 	if !ok {
-		return fmt.Errorf("type is not an enum: %s", stmt.Type)
+		return fmt.Errorf("type is not an enum: %T", stmt.Type)
 	}
 
 	oldIndex := -1
@@ -94,10 +94,10 @@ func (c *Catalog) alterTypeRenameValue(stmt *ast.AlterTypeRenameValueStmt) error
 		}
 	}
 	if oldIndex < 0 {
-		return fmt.Errorf("type %s does not have value %s", stmt.Type, *stmt.OldValue)
+		return fmt.Errorf("type %T does not have value %s", stmt.Type, *stmt.OldValue)
 	}
 	if newIndex >= 0 {
-		return fmt.Errorf("type %s already has value %s", stmt.Type, *stmt.NewValue)
+		return fmt.Errorf("type %T already has value %s", stmt.Type, *stmt.NewValue)
 	}
 	enum.Vals[oldIndex] = *stmt.NewValue
 	return nil
@@ -118,7 +118,7 @@ func (c *Catalog) alterTypeAddValue(stmt *ast.AlterTypeAddValueStmt) error {
 	}
 	enum, ok := typ.(*Enum)
 	if !ok {
-		return fmt.Errorf("type is not an enum: %s", stmt.Type)
+		return fmt.Errorf("type is not an enum: %T", stmt.Type)
 	}
 
 	newIndex := -1
@@ -129,7 +129,7 @@ func (c *Catalog) alterTypeAddValue(stmt *ast.AlterTypeAddValueStmt) error {
 	}
 	if newIndex >= 0 {
 		if !stmt.SkipIfNewValExists {
-			return fmt.Errorf("type %s already has value %s", stmt.Type, *stmt.NewValue)
+			return fmt.Errorf("type %T already has value %s", stmt.Type, *stmt.NewValue)
 		} else {
 			return nil
 		}
@@ -160,5 +160,63 @@ func (c *Catalog) dropType(stmt *ast.DropTypeStmt) error {
 
 		schema.Types = append(schema.Types[:idx], schema.Types[idx+1:]...)
 	}
+	return nil
+}
+
+func (c *Catalog) renameType(stmt *ast.RenameTypeStmt) error {
+	if stmt.NewName == nil {
+		return fmt.Errorf("rename type: empty name")
+	}
+	newName := *stmt.NewName
+	ns := stmt.Type.Schema
+	if ns == "" {
+		ns = c.DefaultSchema
+	}
+	schema, err := c.getSchema(ns)
+	if err != nil {
+		return err
+	}
+	ityp, idx, err := schema.getType(stmt.Type)
+	if err != nil {
+		return err
+	}
+	if _, _, err := schema.getTable(&ast.TableName{Name: newName}); err == nil {
+		return sqlerr.RelationExists(newName)
+	}
+	if _, _, err := schema.getType(&ast.TypeName{Name: newName}); err == nil {
+		return sqlerr.TypeExists(newName)
+	}
+
+	switch typ := ityp.(type) {
+
+	case *CompositeType:
+		schema.Types[idx] = &CompositeType{
+			Name:    newName,
+			Comment: typ.Comment,
+		}
+
+	case *Enum:
+		schema.Types[idx] = &Enum{
+			Name:    newName,
+			Vals:    typ.Vals,
+			Comment: typ.Comment,
+		}
+
+	default:
+		return fmt.Errorf("unsupported type: %T", typ)
+
+	}
+
+	// Update all the table columns with the new type
+	for _, schema := range c.Schemas {
+		for _, table := range schema.Tables {
+			for _, column := range table.Columns {
+				if column.Type == *stmt.Type {
+					column.Type.Name = newName
+				}
+			}
+		}
+	}
+
 	return nil
 }

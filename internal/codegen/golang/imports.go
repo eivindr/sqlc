@@ -1,6 +1,7 @@
 package golang
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 
@@ -9,35 +10,51 @@ import (
 )
 
 type fileImports struct {
-	Std []string
-	Dep []string
+	Std []ImportSpec
+	Dep []ImportSpec
 }
 
-func mergeImports(imps ...fileImports) [][]string {
+type ImportSpec struct {
+	ID   string
+	Path string
+}
+
+func (s ImportSpec) String() string {
+	if s.ID != "" {
+		return fmt.Sprintf("%s \"%s\"", s.ID, s.Path)
+	} else {
+		return fmt.Sprintf("\"%s\"", s.Path)
+	}
+}
+
+func mergeImports(imps ...fileImports) [][]ImportSpec {
 	if len(imps) == 1 {
-		return [][]string{imps[0].Std, imps[0].Dep}
+		return [][]ImportSpec{
+			imps[0].Std,
+			imps[0].Dep,
+		}
 	}
 
-	var stds, pkgs []string
+	var stds, pkgs []ImportSpec
 	seenStd := map[string]struct{}{}
 	seenPkg := map[string]struct{}{}
 	for i := range imps {
-		for _, std := range imps[i].Std {
-			if _, ok := seenStd[std]; ok {
+		for _, spec := range imps[i].Std {
+			if _, ok := seenStd[spec.Path]; ok {
 				continue
 			}
-			stds = append(stds, std)
-			seenStd[std] = struct{}{}
+			stds = append(stds, spec)
+			seenStd[spec.Path] = struct{}{}
 		}
-		for _, pkg := range imps[i].Dep {
-			if _, ok := seenPkg[pkg]; ok {
+		for _, spec := range imps[i].Dep {
+			if _, ok := seenPkg[spec.Path]; ok {
 				continue
 			}
-			pkgs = append(pkgs, pkg)
-			seenPkg[pkg] = struct{}{}
+			pkgs = append(pkgs, spec)
+			seenPkg[spec.Path] = struct{}{}
 		}
 	}
-	return [][]string{stds, pkgs}
+	return [][]ImportSpec{stds, pkgs}
 }
 
 type importer struct {
@@ -70,13 +87,26 @@ func (i *importer) usesArrays() bool {
 	return false
 }
 
-func (i *importer) Imports(filename string) [][]string {
+func (i *importer) Imports(filename string) [][]ImportSpec {
+	dbFileName := "db.go"
+	if i.Settings.Go.OutputDBFileName != "" {
+		dbFileName = i.Settings.Go.OutputDBFileName
+	}
+	modelsFileName := "models.go"
+	if i.Settings.Go.OutputModelsFileName != "" {
+		modelsFileName = i.Settings.Go.OutputModelsFileName
+	}
+	querierFileName := "querier.go"
+	if i.Settings.Go.OutputQuerierFileName != "" {
+		querierFileName = i.Settings.Go.OutputQuerierFileName
+	}
+
 	switch filename {
-	case "db.go":
+	case dbFileName:
 		return mergeImports(i.dbImports())
-	case "models.go":
+	case modelsFileName:
 		return mergeImports(i.modelImports())
-	case "querier.go":
+	case querierFileName:
 		return mergeImports(i.interfaceImports())
 	default:
 		return mergeImports(i.queryImports(filename))
@@ -84,17 +114,27 @@ func (i *importer) Imports(filename string) [][]string {
 }
 
 func (i *importer) dbImports() fileImports {
-	std := []string{"context", "database/sql"}
+	std := []ImportSpec{
+		{Path: "context"},
+		{Path: "database/sql"},
+	}
 	if i.Settings.Go.EmitPreparedQueries {
-		std = append(std, "fmt")
+		std = append(std, ImportSpec{Path: "fmt"})
 	}
 	return fileImports{Std: std}
+}
+
+var stdlibTypes = map[string]string{
+	"json.RawMessage":  "encoding/json",
+	"time.Time":        "time",
+	"net.IP":           "net",
+	"net.HardwareAddr": "net",
 }
 
 func (i *importer) interfaceImports() fileImports {
 	uses := func(name string) bool {
 		for _, q := range i.Queries {
-			if !q.Ret.isEmpty() {
+			if q.hasRetType() {
 				if strings.HasPrefix(q.Ret.Type(), name) {
 					return true
 				}
@@ -109,7 +149,7 @@ func (i *importer) interfaceImports() fileImports {
 	}
 
 	std := map[string]struct{}{
-		"context": struct{}{},
+		"context": {},
 	}
 	if uses("sql.Null") {
 		std["database/sql"] = struct{}{}
@@ -119,56 +159,54 @@ func (i *importer) interfaceImports() fileImports {
 			std["database/sql"] = struct{}{}
 		}
 	}
-	if uses("json.RawMessage") {
-		std["encoding/json"] = struct{}{}
-	}
-	if uses("time.Time") {
-		std["time"] = struct{}{}
-	}
-	if uses("net.IP") {
-		std["net"] = struct{}{}
-	}
-	if uses("net.HardwareAddr") {
-		std["net"] = struct{}{}
+	for typeName, pkg := range stdlibTypes {
+		if uses(typeName) {
+			std[pkg] = struct{}{}
+		}
 	}
 
-	pkg := make(map[string]struct{})
+	pkg := make(map[ImportSpec]struct{})
 	overrideTypes := map[string]string{}
 	for _, o := range i.Settings.Overrides {
-		if o.GoBasicType {
+		if o.GoBasicType || o.GoTypeName == "" {
 			continue
 		}
-		overrideTypes[o.GoTypeName] = o.GoPackage
+		overrideTypes[o.GoTypeName] = o.GoImportPath
 	}
 
 	_, overrideNullTime := overrideTypes["pq.NullTime"]
 	if uses("pq.NullTime") && !overrideNullTime {
-		pkg["github.com/lib/pq"] = struct{}{}
+		pkg[ImportSpec{Path: "github.com/lib/pq"}] = struct{}{}
 	}
 	_, overrideUUID := overrideTypes["uuid.UUID"]
 	if uses("uuid.UUID") && !overrideUUID {
-		pkg["github.com/google/uuid"] = struct{}{}
+		pkg[ImportSpec{Path: "github.com/google/uuid"}] = struct{}{}
 	}
 
 	// Custom imports
-	for goType, importPath := range overrideTypes {
-		if _, ok := std[importPath]; !ok && uses(goType) {
-			pkg[importPath] = struct{}{}
+	for _, o := range i.Settings.Overrides {
+		if o.GoBasicType || o.GoTypeName == "" {
+			continue
+		}
+		_, alreadyImported := std[o.GoImportPath]
+		hasPackageAlias := o.GoPackage != ""
+		if (!alreadyImported || hasPackageAlias) && uses(o.GoTypeName) {
+			pkg[ImportSpec{Path: o.GoImportPath, ID: o.GoPackage}] = struct{}{}
 		}
 	}
 
-	pkgs := make([]string, 0, len(pkg))
-	for p, _ := range pkg {
-		pkgs = append(pkgs, p)
+	pkgs := make([]ImportSpec, 0, len(pkg))
+	for spec := range pkg {
+		pkgs = append(pkgs, spec)
 	}
 
-	stds := make([]string, 0, len(std))
-	for s, _ := range std {
-		stds = append(stds, s)
+	stds := make([]ImportSpec, 0, len(std))
+	for path := range std {
+		stds = append(stds, ImportSpec{Path: path})
 	}
 
-	sort.Strings(stds)
-	sort.Strings(pkgs)
+	sort.Slice(stds, func(i, j int) bool { return stds[i].Path < stds[j].Path })
+	sort.Slice(pkgs, func(i, j int) bool { return pkgs[i].Path < pkgs[j].Path })
 	return fileImports{stds, pkgs}
 }
 
@@ -177,60 +215,58 @@ func (i *importer) modelImports() fileImports {
 	if i.usesType("sql.Null") {
 		std["database/sql"] = struct{}{}
 	}
-	if i.usesType("json.RawMessage") {
-		std["encoding/json"] = struct{}{}
-	}
-	if i.usesType("time.Time") {
-		std["time"] = struct{}{}
-	}
-	if i.usesType("net.IP") {
-		std["net"] = struct{}{}
-	}
-	if i.usesType("net.HardwareAddr") {
-		std["net"] = struct{}{}
+	for typeName, pkg := range stdlibTypes {
+		if i.usesType(typeName) {
+			std[pkg] = struct{}{}
+		}
 	}
 	if len(i.Enums) > 0 {
 		std["fmt"] = struct{}{}
 	}
 
 	// Custom imports
-	pkg := make(map[string]struct{})
+	pkg := make(map[ImportSpec]struct{})
 	overrideTypes := map[string]string{}
 	for _, o := range i.Settings.Overrides {
-		if o.GoBasicType {
+		if o.GoBasicType || o.GoTypeName == "" {
 			continue
 		}
-		overrideTypes[o.GoTypeName] = o.GoPackage
+		overrideTypes[o.GoTypeName] = o.GoImportPath
 	}
 
 	_, overrideNullTime := overrideTypes["pq.NullTime"]
 	if i.usesType("pq.NullTime") && !overrideNullTime {
-		pkg["github.com/lib/pq"] = struct{}{}
+		pkg[ImportSpec{Path: "github.com/lib/pq"}] = struct{}{}
 	}
 
 	_, overrideUUID := overrideTypes["uuid.UUID"]
 	if i.usesType("uuid.UUID") && !overrideUUID {
-		pkg["github.com/google/uuid"] = struct{}{}
+		pkg[ImportSpec{Path: "github.com/google/uuid"}] = struct{}{}
 	}
 
-	for goType, importPath := range overrideTypes {
-		if _, ok := std[importPath]; !ok && i.usesType(goType) {
-			pkg[importPath] = struct{}{}
+	for _, o := range i.Settings.Overrides {
+		if o.GoBasicType || o.GoTypeName == "" {
+			continue
+		}
+		_, alreadyImported := std[o.GoImportPath]
+		hasPackageAlias := o.GoPackage != ""
+		if (!alreadyImported || hasPackageAlias) && i.usesType(o.GoTypeName) {
+			pkg[ImportSpec{Path: o.GoImportPath, ID: o.GoPackage}] = struct{}{}
 		}
 	}
 
-	pkgs := make([]string, 0, len(pkg))
-	for p, _ := range pkg {
-		pkgs = append(pkgs, p)
+	pkgs := make([]ImportSpec, 0, len(pkg))
+	for spec := range pkg {
+		pkgs = append(pkgs, spec)
 	}
 
-	stds := make([]string, 0, len(std))
-	for s, _ := range std {
-		stds = append(stds, s)
+	stds := make([]ImportSpec, 0, len(std))
+	for path := range std {
+		stds = append(stds, ImportSpec{Path: path})
 	}
 
-	sort.Strings(stds)
-	sort.Strings(pkgs)
+	sort.Slice(stds, func(i, j int) bool { return stds[i].Path < stds[j].Path })
+	sort.Slice(pkgs, func(i, j int) bool { return pkgs[i].Path < pkgs[j].Path })
 	return fileImports{stds, pkgs}
 }
 
@@ -244,7 +280,7 @@ func (i *importer) queryImports(filename string) fileImports {
 
 	uses := func(name string) bool {
 		for _, q := range gq {
-			if !q.Ret.isEmpty() {
+			if q.hasRetType() {
 				if q.Ret.EmitStruct() {
 					for _, f := range q.Ret.Struct.Fields {
 						fType := strings.TrimPrefix(f.Type, "[]")
@@ -276,7 +312,7 @@ func (i *importer) queryImports(filename string) fileImports {
 
 	sliceScan := func() bool {
 		for _, q := range gq {
-			if !q.Ret.isEmpty() {
+			if q.hasRetType() {
 				if q.Ret.IsStruct() {
 					for _, f := range q.Ret.Struct.Fields {
 						if strings.HasPrefix(f.Type, "[]") && f.Type != "[]byte" {
@@ -307,7 +343,7 @@ func (i *importer) queryImports(filename string) fileImports {
 	}
 
 	std := map[string]struct{}{
-		"context": struct{}{},
+		"context": {},
 	}
 	if uses("sql.Null") {
 		std["database/sql"] = struct{}{}
@@ -317,55 +353,56 @@ func (i *importer) queryImports(filename string) fileImports {
 			std["database/sql"] = struct{}{}
 		}
 	}
-	if uses("json.RawMessage") {
-		std["encoding/json"] = struct{}{}
-	}
-	if uses("time.Time") {
-		std["time"] = struct{}{}
-	}
-	if uses("net.IP") {
-		std["net"] = struct{}{}
+	for typeName, pkg := range stdlibTypes {
+		if uses(typeName) {
+			std[pkg] = struct{}{}
+		}
 	}
 
-	pkg := make(map[string]struct{})
+	pkg := make(map[ImportSpec]struct{})
 	overrideTypes := map[string]string{}
 	for _, o := range i.Settings.Overrides {
-		if o.GoBasicType {
+		if o.GoBasicType || o.GoTypeName == "" {
 			continue
 		}
-		overrideTypes[o.GoTypeName] = o.GoPackage
+		overrideTypes[o.GoTypeName] = o.GoImportPath
 	}
 
 	if sliceScan() {
-		pkg["github.com/lib/pq"] = struct{}{}
+		pkg[ImportSpec{Path: "github.com/lib/pq"}] = struct{}{}
 	}
 	_, overrideNullTime := overrideTypes["pq.NullTime"]
 	if uses("pq.NullTime") && !overrideNullTime {
-		pkg["github.com/lib/pq"] = struct{}{}
+		pkg[ImportSpec{Path: "github.com/lib/pq"}] = struct{}{}
 	}
 	_, overrideUUID := overrideTypes["uuid.UUID"]
 	if uses("uuid.UUID") && !overrideUUID {
-		pkg["github.com/google/uuid"] = struct{}{}
+		pkg[ImportSpec{Path: "github.com/google/uuid"}] = struct{}{}
 	}
 
 	// Custom imports
-	for goType, importPath := range overrideTypes {
-		if _, ok := std[importPath]; !ok && uses(goType) {
-			pkg[importPath] = struct{}{}
+	for _, o := range i.Settings.Overrides {
+		if o.GoBasicType || o.GoTypeName == "" {
+			continue
+		}
+		_, alreadyImported := std[o.GoImportPath]
+		hasPackageAlias := o.GoPackage != ""
+		if (!alreadyImported || hasPackageAlias) && uses(o.GoTypeName) {
+			pkg[ImportSpec{Path: o.GoImportPath, ID: o.GoPackage}] = struct{}{}
 		}
 	}
 
-	pkgs := make([]string, 0, len(pkg))
-	for p, _ := range pkg {
-		pkgs = append(pkgs, p)
+	pkgs := make([]ImportSpec, 0, len(pkg))
+	for spec := range pkg {
+		pkgs = append(pkgs, spec)
 	}
 
-	stds := make([]string, 0, len(std))
-	for s, _ := range std {
-		stds = append(stds, s)
+	stds := make([]ImportSpec, 0, len(std))
+	for path := range std {
+		stds = append(stds, ImportSpec{Path: path})
 	}
 
-	sort.Strings(stds)
-	sort.Strings(pkgs)
+	sort.Slice(stds, func(i, j int) bool { return stds[i].Path < stds[j].Path })
+	sort.Slice(pkgs, func(i, j int) bool { return pkgs[i].Path < pkgs[j].Path })
 	return fileImports{stds, pkgs}
 }

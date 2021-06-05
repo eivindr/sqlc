@@ -1,8 +1,9 @@
 package catalog
 
 import (
+	"strings"
+
 	"github.com/kyleconroy/sqlc/internal/sql/ast"
-	"github.com/kyleconroy/sqlc/internal/sql/ast/pg"
 	"github.com/kyleconroy/sqlc/internal/sql/sqlerr"
 )
 
@@ -117,7 +118,7 @@ func sameType(a, b *ast.TypeName) bool {
 
 func (s *Schema) getFunc(rel *ast.FuncName, tns []*ast.TypeName) (*Function, int, error) {
 	for i := range s.Funcs {
-		if s.Funcs[i].Name != rel.Name {
+		if strings.ToLower(s.Funcs[i].Name) != strings.ToLower(rel.Name) {
 			continue
 		}
 
@@ -142,11 +143,13 @@ func (s *Schema) getFunc(rel *ast.FuncName, tns []*ast.TypeName) (*Function, int
 
 func (s *Schema) getFuncByName(rel *ast.FuncName) (*Function, int, error) {
 	idx := -1
+	name := strings.ToLower(rel.Name)
 	for i := range s.Funcs {
-		if s.Funcs[i].Name == rel.Name && idx >= 0 {
+		lowered := strings.ToLower(s.Funcs[i].Name)
+		if lowered == name && idx >= 0 {
 			return nil, -1, sqlerr.FunctionNotUnique(rel.Name)
 		}
-		if s.Funcs[i].Name == rel.Name {
+		if lowered == name {
 			idx = i
 		}
 	}
@@ -190,6 +193,7 @@ type Column struct {
 	IsNotNull bool
 	IsArray   bool
 	Comment   string
+	Length    *int
 }
 
 type Type interface {
@@ -255,7 +259,7 @@ func New(def string) *Catalog {
 	return &Catalog{
 		DefaultSchema: def,
 		Schemas: []*Schema{
-			&Schema{Name: def},
+			{Name: def},
 		},
 		Extensions: map[string]struct{}{},
 	}
@@ -306,7 +310,7 @@ func (c *Catalog) Update(stmt ast.Statement) error {
 	case *ast.CreateEnumStmt:
 		err = c.createEnum(n)
 
-	case *pg.CreateExtensionStmt:
+	case *ast.CreateExtensionStmt:
 		err = c.createExtension(n)
 
 	case *ast.CreateFunctionStmt:
@@ -335,6 +339,9 @@ func (c *Catalog) Update(stmt ast.Statement) error {
 
 	case *ast.RenameTableStmt:
 		err = c.renameTable(n)
+
+	case *ast.RenameTypeStmt:
+		err = c.renameType(n)
 
 	}
 	return err
