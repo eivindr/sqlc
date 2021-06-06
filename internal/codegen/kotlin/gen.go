@@ -550,6 +550,9 @@ interface Queries {
   {{- if eq .Cmd ":many"}}
   fun {{.MethodName}}({{.Arg.Args}}): List<{{.Ret.Type}}>
   {{- end}}
+  {{- if eq .Cmd ":iter"}}
+  fun {{.MethodName}}(iter: ({{.Ret.Name}}: {{.Ret.Type}}) -> Unit{{ if .Arg.Args }}, {{ .Arg.Args}}{{end}})
+  {{- end}}
   {{- if eq .Cmd ":exec"}}
   fun {{.MethodName}}({{.Arg.Args}})
   {{- end}}
@@ -660,6 +663,27 @@ class QueriesImpl(private val conn: Connection) : Queries {
           ret.add({{.Ret.ResultSet}})
       }
       ret
+    }
+  }
+{{end}}
+
+{{if eq .Cmd ":iter"}}
+{{range .Comments}}//{{.}}
+{{end}}
+  @Throws(SQLException::class)
+  override fun {{.MethodName}}(iter: ({{.Ret.Name}}: {{.Ret.Type}}) -> Unit{{ if .Arg.Args }}, {{ .Arg.Args}}{{end}}) {
+    return conn.prepareStatement({{.ConstantName}}).use { stmt ->
+      {{.Arg.Bindings}}
+
+      val results = stmt.executeQuery()
+      while (results.next()) {
+          val ret = {{.Ret.ResultSet}}
+          try {
+            iter(ret)
+          } catch (e: Exception) {
+            throw SQLException("error calling iter function at row %d".format(results.row), e)
+          }
+      }
     }
   }
 {{end}}
