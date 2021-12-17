@@ -45,6 +45,10 @@ err := queries.StreamAuthors(ctx, iter)
 
 Also note that if the iter function return an error, the streaming query will close and return the error.
 
+### Building this fork
+
+Clone and run `go build ./cmd/sqlc/main.go` from withing the project root.
+
 ## Overview
 
 - [Documentation](https://docs.sqlc.dev)
