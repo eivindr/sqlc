@@ -1,3 +1,4 @@
+//go:build !windows
 // +build !windows
 
 package postgresql
@@ -2015,7 +2016,12 @@ func convertParamRef(n *pg.ParamRef) *ast.ParamRef {
 	if n == nil {
 		return nil
 	}
+	var dollar bool
+	if n.Number != 0 {
+		dollar = true
+	}
 	return &ast.ParamRef{
+		Dollar:   dollar,
 		Number:   int(n.Number),
 		Location: int(n.Location),
 	}
@@ -2760,8 +2766,11 @@ func convertUpdateStmt(n *pg.UpdateStmt) *ast.UpdateStmt {
 	if n == nil {
 		return nil
 	}
+
 	return &ast.UpdateStmt{
-		Relation:      convertRangeVar(n.Relation),
+		Relations: &ast.List{
+			Items: []ast.Node{convertRangeVar(n.Relation)},
+		},
 		TargetList:    convertSlice(n.TargetList),
 		WhereClause:   convertNode(n.WhereClause),
 		FromClause:    convertSlice(n.FromClause),
@@ -2775,10 +2784,10 @@ func convertVacuumStmt(n *pg.VacuumStmt) *ast.VacuumStmt {
 		return nil
 	}
 	return &ast.VacuumStmt{
-	// FIXME: The VacuumStmt node has changed quite a bit
-	// Options:  n.Options
-	// Relation: convertRangeVar(n.Relation),
-	// VaCols:   convertSlice(n.VaCols),
+		// FIXME: The VacuumStmt node has changed quite a bit
+		// Options:  n.Options
+		// Relation: convertRangeVar(n.Relation),
+		// VaCols:   convertSlice(n.VaCols),
 	}
 }
 

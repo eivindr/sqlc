@@ -25,6 +25,14 @@ func todo(n pcast.Node) *ast.TODO {
 	return &ast.TODO{}
 }
 
+func identifier(id string) string {
+	return strings.ToLower(id)
+}
+
+func NewIdentifer(t string) *ast.String {
+	return &ast.String{Str: identifier(t)}
+}
+
 func (c *cc) convertAlterTableStmt(n *pcast.AlterTableStmt) ast.Node {
 	alt := &ast.AlterTableStmt{
 		Table: parseTableName(n.Table),
@@ -119,7 +127,7 @@ func (c *cc) convertAlterTableStmt(n *pcast.AlterTableStmt) ast.Node {
 }
 
 func (c *cc) convertAssignment(n *pcast.Assignment) *ast.ResTarget {
-	name := n.Column.Name.String()
+	name := identifier(n.Column.Name.String())
 	return &ast.ResTarget{
 		Name: &name,
 		Val:  c.convert(n.Expr),
@@ -259,12 +267,12 @@ func (c *cc) convertCreateTableStmt(n *pcast.CreateTableStmt) ast.Node {
 func (c *cc) convertColumnNameExpr(n *pcast.ColumnNameExpr) *ast.ColumnRef {
 	var items []ast.Node
 	if schema := n.Name.Schema.String(); schema != "" {
-		items = append(items, &ast.String{Str: schema})
+		items = append(items, NewIdentifer(schema))
 	}
 	if table := n.Name.Table.String(); table != "" {
-		items = append(items, &ast.String{Str: table})
+		items = append(items, NewIdentifer(table))
 	}
-	items = append(items, &ast.String{Str: n.Name.Name.String()})
+	items = append(items, NewIdentifer(n.Name.Name.String()))
 	return &ast.ColumnRef{
 		Fields: &ast.List{
 			Items: items,
@@ -275,7 +283,7 @@ func (c *cc) convertColumnNameExpr(n *pcast.ColumnNameExpr) *ast.ColumnRef {
 func (c *cc) convertColumnNames(cols []*pcast.ColumnName) *ast.List {
 	list := &ast.List{Items: []ast.Node{}}
 	for i := range cols {
-		name := cols[i].Name.String()
+		name := identifier(cols[i].Name.String())
 		list.Items = append(list.Items, &ast.ResTarget{
 			Name: &name,
 		})
@@ -298,6 +306,7 @@ func (c *cc) convertDeleteStmt(n *pcast.DeleteStmt) *ast.DeleteStmt {
 		Relation:      rangeVar,
 		WhereClause:   c.convert(n.Where),
 		ReturningList: &ast.List{},
+		WithClause:    c.convertWithClause(n.With),
 	}
 }
 
@@ -310,10 +319,14 @@ func (c *cc) convertDropTableStmt(n *pcast.DropTableStmt) ast.Node {
 }
 
 func (c *cc) convertRenameTableStmt(n *pcast.RenameTableStmt) ast.Node {
-	return &ast.RenameTableStmt{
-		Table:   parseTableName(n.OldTable),
-		NewName: &parseTableName(n.NewTable).Name,
+	list := &ast.List{Items: []ast.Node{}}
+	for _, table := range n.TableToTables {
+		list.Items = append(list.Items, &ast.RenameTableStmt{
+			Table:   parseTableName(table.OldTable),
+			NewName: &parseTableName(table.NewTable).Name,
+		})
 	}
+	return list
 }
 
 func (c *cc) convertExistsSubqueryExpr(n *pcast.ExistsSubqueryExpr) *ast.SubLink {
@@ -339,9 +352,9 @@ func (c *cc) convertFuncCallExpr(n *pcast.FuncCallExpr) ast.Node {
 	// TODO: Deprecate the usage of Funcname
 	items := []ast.Node{}
 	if schema != "" {
-		items = append(items, &ast.String{Str: schema})
+		items = append(items, NewIdentifer(schema))
 	}
-	items = append(items, &ast.String{Str: name})
+	items = append(items, NewIdentifer(name))
 
 	args := &ast.List{}
 	for _, arg := range n.Args {
@@ -394,6 +407,18 @@ func (c *cc) convertInsertStmt(n *pcast.InsertStmt) *ast.InsertStmt {
 			ValuesLists: c.convertLists(n.Lists),
 		}
 	}
+
+	if n.OnDuplicate != nil {
+		targetList := &ast.List{}
+		for _, a := range n.OnDuplicate {
+			targetList.Items = append(targetList.Items, c.convertAssignment(a))
+		}
+		insert.OnConflictClause = &ast.OnConflictClause{
+			TargetList: targetList,
+			Location:   n.OriginTextPosition(),
+		}
+	}
+
 	return insert
 }
 
@@ -427,7 +452,8 @@ func (c *cc) convertSelectField(n *pcast.SelectField) *ast.ResTarget {
 	}
 	var name *string
 	if n.AsName.O != "" {
-		name = &n.AsName.O
+		asname := identifier(n.AsName.O)
+		name = &asname
 	}
 	return &ast.ResTarget{
 		// TODO: Populate Indirection field
@@ -438,13 +464,22 @@ func (c *cc) convertSelectField(n *pcast.SelectField) *ast.ResTarget {
 }
 
 func (c *cc) convertSelectStmt(n *pcast.SelectStmt) *ast.SelectStmt {
+	windowClause := &ast.List{Items: make([]ast.Node, 0)}
+	orderByClause := c.convertOrderByClause(n.OrderBy)
+	if orderByClause != nil {
+		windowClause.Items = append(windowClause.Items, orderByClause)
+	}
+
 	op, all := c.convertSetOprType(n.AfterSetOperator)
 	stmt := &ast.SelectStmt{
-		TargetList:  c.convertFieldList(n.Fields),
-		FromClause:  c.convertTableRefsClause(n.From),
-		WhereClause: c.convert(n.Where),
-		Op:          op,
-		All:         all,
+		TargetList:   c.convertFieldList(n.Fields),
+		FromClause:   c.convertTableRefsClause(n.From),
+		GroupClause:  c.convertGroupByClause(n.GroupBy),
+		WhereClause:  c.convert(n.Where),
+		WithClause:   c.convertWithClause(n.With),
+		WindowClause: windowClause,
+		Op:           op,
+		All:          all,
 	}
 	if n.Limit != nil {
 		stmt.LimitCount = c.convert(n.Limit.Count)
@@ -464,13 +499,49 @@ func (c *cc) convertTableRefsClause(n *pcast.TableRefsClause) *ast.List {
 	return c.convertJoin(n.TableRefs)
 }
 
+func (c *cc) convertCommonTableExpression(n *pcast.CommonTableExpression) *ast.CommonTableExpr {
+	if n == nil {
+		return nil
+	}
+
+	name := n.Name.String()
+
+	columns := &ast.List{}
+	for _, col := range n.ColNameList {
+		columns.Items = append(columns.Items, NewIdentifer(col.String()))
+	}
+
+	return &ast.CommonTableExpr{
+		Ctename:     &name,
+		Ctequery:    c.convert(n.Query),
+		Ctecolnames: columns,
+	}
+
+}
+
+func (c *cc) convertWithClause(n *pcast.WithClause) *ast.WithClause {
+	if n == nil {
+		return nil
+	}
+	list := &ast.List{}
+	for _, n := range n.CTEs {
+		list.Items = append(list.Items, c.convertCommonTableExpression(n))
+	}
+
+	return &ast.WithClause{
+		Ctes:      list,
+		Recursive: n.IsRecursive,
+		Location:  n.OriginTextPosition(),
+	}
+}
+
 func (c *cc) convertUpdateStmt(n *pcast.UpdateStmt) *ast.UpdateStmt {
 	rels := c.convertTableRefsClause(n.TableRefs)
 	if len(rels.Items) != 1 {
 		panic("expected one range var")
 	}
 
-	var rangeVar *ast.RangeVar
+	relations := &ast.List{}
 	switch rel := rels.Items[0].(type) {
 
 	// Special case for joins in updates
@@ -479,10 +550,16 @@ func (c *cc) convertUpdateStmt(n *pcast.UpdateStmt) *ast.UpdateStmt {
 		if !ok {
 			panic("expected range var")
 		}
-		rangeVar = left
+		relations.Items = append(relations.Items, left)
+
+		right, ok := rel.Rarg.(*ast.RangeVar)
+		if !ok {
+			panic("expected range var")
+		}
+		relations.Items = append(relations.Items, right)
 
 	case *ast.RangeVar:
-		rangeVar = rel
+		relations.Items = append(relations.Items, rel)
 
 	default:
 		panic("expected range var")
@@ -494,11 +571,12 @@ func (c *cc) convertUpdateStmt(n *pcast.UpdateStmt) *ast.UpdateStmt {
 		list.Items = append(list.Items, c.convertAssignment(a))
 	}
 	return &ast.UpdateStmt{
-		Relation:      rangeVar,
+		Relations:     relations,
 		TargetList:    list,
 		WhereClause:   c.convert(n.Where),
 		FromClause:    &ast.List{},
 		ReturningList: &ast.List{},
+		WithClause:    c.convertWithClause(n.With),
 	}
 }
 
@@ -513,7 +591,7 @@ func (c *cc) convertValueExpr(n *driver.ValueExpr) *ast.A_Const {
 func (c *cc) convertWildCardField(n *pcast.WildCardField) *ast.ColumnRef {
 	items := []ast.Node{}
 	if t := n.Table.String(); t != "" {
-		items = append(items, &ast.String{Str: t})
+		items = append(items, NewIdentifer(t))
 	}
 	items = append(items, &ast.A_Star{})
 
@@ -536,9 +614,7 @@ func (c *cc) convertAggregateFuncExpr(n *pcast.AggregateFuncExpr) *ast.FuncCall 
 		},
 		Funcname: &ast.List{
 			Items: []ast.Node{
-				&ast.String{
-					Str: name,
-				},
+				NewIdentifer(name),
 			},
 		},
 		Args:     &ast.List{},
@@ -588,7 +664,13 @@ func (c *cc) convertBeginStmt(n *pcast.BeginStmt) ast.Node {
 }
 
 func (c *cc) convertBetweenExpr(n *pcast.BetweenExpr) ast.Node {
-	return todo(n)
+	return &ast.BetweenExpr{
+		Expr:     c.convert(n.Expr),
+		Left:     c.convert(n.Left),
+		Right:    c.convert(n.Right),
+		Location: n.OriginTextPosition(),
+		Not:      n.Not,
+	}
 }
 
 func (c *cc) convertBinlogStmt(n *pcast.BinlogStmt) ast.Node {
@@ -596,11 +678,29 @@ func (c *cc) convertBinlogStmt(n *pcast.BinlogStmt) ast.Node {
 }
 
 func (c *cc) convertByItem(n *pcast.ByItem) ast.Node {
-	return todo(n)
+	switch n.Expr.(type) {
+	case *pcast.PositionExpr:
+		return c.convertPositionExpr(n.Expr.(*pcast.PositionExpr))
+	case *pcast.ColumnNameExpr:
+		return c.convertColumnNameExpr(n.Expr.(*pcast.ColumnNameExpr))
+	default:
+		return todo(n)
+	}
 }
 
 func (c *cc) convertCaseExpr(n *pcast.CaseExpr) ast.Node {
-	return todo(n)
+	if n == nil {
+		return nil
+	}
+	list := &ast.List{Items: []ast.Node{}}
+	for _, n := range n.WhenClauses {
+		list.Items = append(list.Items, c.convertWhenClause(n))
+	}
+	return &ast.CaseExpr{
+		Args:      list,
+		Defresult: c.convert(n.ElseClause),
+		Location:  n.OriginTextPosition(),
+	}
 }
 
 func (c *cc) convertChangeStmt(n *pcast.ChangeStmt) ast.Node {
@@ -697,7 +797,7 @@ func (c *cc) convertDropDatabaseStmt(n *pcast.DropDatabaseStmt) ast.Node {
 	return &ast.DropSchemaStmt{
 		MissingOk: !n.IfExists,
 		Schemas: []*ast.String{
-			{Str: n.Name},
+			NewIdentifer(n.Name),
 		},
 	}
 }
@@ -766,8 +866,19 @@ func (c *cc) convertGrantStmt(n *pcast.GrantStmt) ast.Node {
 	return todo(n)
 }
 
-func (c *cc) convertGroupByClause(n *pcast.GroupByClause) ast.Node {
-	return todo(n)
+func (c *cc) convertGroupByClause(n *pcast.GroupByClause) *ast.List {
+	if n == nil {
+		return &ast.List{}
+	}
+
+	var items []ast.Node
+	for _, item := range n.Items {
+		items = append(items, c.convertByItem(item))
+	}
+
+	return &ast.List{
+		Items: items,
+	}
 }
 
 func (c *cc) convertHavingClause(n *pcast.HavingClause) ast.Node {
@@ -799,11 +910,18 @@ func (c *cc) convertJoin(n *pcast.Join) *ast.List {
 		return &ast.List{}
 	}
 	if n.Right != nil && n.Left != nil {
+		// MySQL doesn't have a FULL join type
+		joinType := ast.JoinType(n.Tp)
+		if joinType >= ast.JoinTypeFull {
+			joinType++
+		}
+
 		return &ast.List{
 			Items: []ast.Node{&ast.JoinExpr{
-				Larg:  c.convert(n.Left),
-				Rarg:  c.convert(n.Right),
-				Quals: c.convert(n.On),
+				Jointype: joinType,
+				Larg:     c.convert(n.Left),
+				Rarg:     c.convert(n.Right),
+				Quals:    c.convert(n.On),
 			}},
 		}
 	}
@@ -861,7 +979,25 @@ func (c *cc) convertOnUpdateOpt(n *pcast.OnUpdateOpt) ast.Node {
 }
 
 func (c *cc) convertOrderByClause(n *pcast.OrderByClause) ast.Node {
-	return todo(n)
+	if n == nil {
+		return nil
+	}
+	list := &ast.List{Items: []ast.Node{}}
+	for _, item := range n.Items {
+		switch item.Expr.(type) {
+		case *pcast.CaseExpr:
+			list.Items = append(list.Items, &ast.CaseWhen{
+				Expr:     c.convert(item.Expr),
+				Location: item.Expr.OriginTextPosition(),
+			})
+		case *pcast.ColumnNameExpr:
+			list.Items = append(list.Items, &ast.CaseExpr{
+				Xpr:      c.convert(item.Expr),
+				Location: item.Expr.OriginTextPosition(),
+			})
+		}
+	}
+	return list
 }
 
 func (c *cc) convertParenthesesExpr(n *pcast.ParenthesesExpr) ast.Node {
@@ -876,7 +1012,29 @@ func (c *cc) convertPartitionByClause(n *pcast.PartitionByClause) ast.Node {
 }
 
 func (c *cc) convertPatternInExpr(n *pcast.PatternInExpr) ast.Node {
-	return todo(n)
+	var list []ast.Node
+	var val ast.Node
+
+	expr := c.convert(n.Expr)
+
+	for _, v := range n.List {
+		val = c.convert(v)
+		if val != nil {
+			list = append(list, val)
+		}
+	}
+
+	sel := c.convert(n.Sel)
+
+	in := &ast.In{
+		Expr:     expr,
+		List:     list,
+		Not:      n.Not,
+		Sel:      sel,
+		Location: n.OriginTextPosition(),
+	}
+
+	return in
 }
 
 func (c *cc) convertPatternLikeExpr(n *pcast.PatternLikeExpr) ast.Node {
@@ -1010,6 +1168,7 @@ func (c *cc) convertSetOprSelectList(n *pcast.SetOprSelectList) ast.Node {
 		WhereClause: nil,
 		Op:          op,
 		All:         all,
+		WithClause:  c.convertWithClause(n.With),
 	}
 	for _, stmt := range selectStmts {
 		// We move Op and All from the child to the parent.
@@ -1032,6 +1191,7 @@ func (c *cc) convertSetOprSelectList(n *pcast.SetOprSelectList) ast.Node {
 				Rarg:        stmt,
 				Op:          op,
 				All:         all,
+				WithClause:  c.convertWithClause(n.With),
 			}
 		}
 	}
@@ -1071,8 +1231,8 @@ func (c *cc) convertSplitRegionStmt(n *pcast.SplitRegionStmt) ast.Node {
 }
 
 func (c *cc) convertTableName(n *pcast.TableName) *ast.RangeVar {
-	schema := n.Schema.String()
-	rel := n.Name.String()
+	schema := identifier(n.Schema.String())
+	rel := identifier(n.Name.String())
 	return &ast.RangeVar{
 		Schemaname: &schema,
 		Relname:    &rel,
@@ -1162,7 +1322,14 @@ func (c *cc) convertVariableExpr(n *pcast.VariableExpr) ast.Node {
 }
 
 func (c *cc) convertWhenClause(n *pcast.WhenClause) ast.Node {
-	return todo(n)
+	if n == nil {
+		return nil
+	}
+	return &ast.CaseWhen{
+		Expr:     c.convert(n.Expr),
+		Result:   c.convert(n.Result),
+		Location: n.OriginTextPosition(),
+	}
 }
 
 func (c *cc) convertWindowFuncExpr(n *pcast.WindowFuncExpr) ast.Node {

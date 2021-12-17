@@ -228,11 +228,12 @@ func (ct *CompositeType) SetComment(c string) {
 }
 
 type Function struct {
-	Name       string
-	Args       []*Argument
-	ReturnType *ast.TypeName
-	Comment    string
-	Desc       string
+	Name               string
+	Args               []*Argument
+	ReturnType         *ast.TypeName
+	Comment            string
+	Desc               string
+	ReturnTypeNullable bool
 }
 
 func (f *Function) InArgs() []*Argument {
@@ -352,6 +353,19 @@ func (c *Catalog) Update(stmt ast.Statement, colGen columnGenerator) error {
 
 	case *ast.RenameTypeStmt:
 		err = c.renameType(n)
+
+	case *ast.List:
+		for _, nn := range n.Items {
+			if err = c.Update(ast.Statement{
+				Raw: &ast.RawStmt{
+					Stmt:         nn,
+					StmtLocation: stmt.Raw.StmtLocation,
+					StmtLen:      stmt.Raw.StmtLen,
+				},
+			}, colGen); err != nil {
+				return err
+			}
+		}
 
 	}
 	return err

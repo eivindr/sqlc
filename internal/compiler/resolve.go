@@ -31,6 +31,11 @@ func resolveCatalogRefs(c *catalog.Catalog, qc *QueryCatalog, rvs []*ast.RangeVa
 		return defaultName
 	}
 
+	isNamedParam := func(n int) bool {
+		_, ok := names[n]
+		return ok
+	}
+
 	typeMap := map[string]map[string]map[string]*catalog.Column{}
 	indexTable := func(table catalog.Table) error {
 		tables = append(tables, table.Rel)
@@ -88,9 +93,10 @@ func resolveCatalogRefs(c *catalog.Catalog, qc *QueryCatalog, rvs []*ast.RangeVa
 			a = append(a, Parameter{
 				Number: ref.ref.Number,
 				Column: &Column{
-					Name:     parameterName(ref.ref.Number, "offset"),
-					DataType: "integer",
-					NotNull:  true,
+					Name:         parameterName(ref.ref.Number, "offset"),
+					DataType:     "integer",
+					NotNull:      true,
+					IsNamedParam: isNamedParam(ref.ref.Number),
 				},
 			})
 
@@ -98,9 +104,10 @@ func resolveCatalogRefs(c *catalog.Catalog, qc *QueryCatalog, rvs []*ast.RangeVa
 			a = append(a, Parameter{
 				Number: ref.ref.Number,
 				Column: &Column{
-					Name:     parameterName(ref.ref.Number, "limit"),
-					DataType: "integer",
-					NotNull:  true,
+					Name:         parameterName(ref.ref.Number, "limit"),
+					DataType:     "integer",
+					NotNull:      true,
+					IsNamedParam: isNamedParam(ref.ref.Number),
 				},
 			})
 
@@ -121,8 +128,9 @@ func resolveCatalogRefs(c *catalog.Catalog, qc *QueryCatalog, rvs []*ast.RangeVa
 				a = append(a, Parameter{
 					Number: ref.ref.Number,
 					Column: &Column{
-						Name:     parameterName(ref.ref.Number, ""),
-						DataType: dataType,
+						Name:         parameterName(ref.ref.Number, ""),
+						DataType:     dataType,
+						IsNamedParam: isNamedParam(ref.ref.Number),
 					},
 				})
 				continue
@@ -147,9 +155,18 @@ func resolveCatalogRefs(c *catalog.Catalog, qc *QueryCatalog, rvs []*ast.RangeVa
 					if original, ok := aliasMap[alias]; ok {
 						search = []*ast.TableName{original}
 					} else {
+						var located bool
 						for _, fqn := range tables {
 							if fqn.Name == alias {
+								located = true
 								search = []*ast.TableName{fqn}
+							}
+						}
+						if !located {
+							return nil, &sqlerr.Error{
+								Code:     "42703",
+								Message:  fmt.Sprintf("table alias \"%s\" does not exist", alias),
+								Location: left.Location,
 							}
 						}
 					}
@@ -169,12 +186,13 @@ func resolveCatalogRefs(c *catalog.Catalog, qc *QueryCatalog, rvs []*ast.RangeVa
 						a = append(a, Parameter{
 							Number: ref.ref.Number,
 							Column: &Column{
-								Name:     parameterName(ref.ref.Number, key),
-								DataType: dataType(&c.Type),
-								NotNull:  c.IsNotNull,
-								IsArray:  c.IsArray,
-								Length:   c.Length,
-								Table:    table,
+								Name:         parameterName(ref.ref.Number, key),
+								DataType:     dataType(&c.Type),
+								NotNull:      c.IsNotNull,
+								IsArray:      c.IsArray,
+								Length:       c.Length,
+								Table:        table,
+								IsNamedParam: isNamedParam(ref.ref.Number),
 							},
 						})
 					}
@@ -193,6 +211,46 @@ func resolveCatalogRefs(c *catalog.Catalog, qc *QueryCatalog, rvs []*ast.RangeVa
 						Message:  fmt.Sprintf("column reference \"%s\" is ambiguous", key),
 						Location: left.Location,
 					}
+				}
+			}
+
+		case *ast.BetweenExpr:
+			if n == nil || n.Expr == nil || n.Left == nil || n.Right == nil {
+				fmt.Println("ast.BetweenExpr is nil")
+				continue
+			}
+
+			var key string
+			if ref, ok := n.Expr.(*ast.ColumnRef); ok {
+				itemsCount := len(ref.Fields.Items)
+				if str, ok := ref.Fields.Items[itemsCount-1].(*ast.String); ok {
+					key = str.Str
+				}
+			}
+
+			number := 0
+			if pr, ok := n.Left.(*ast.ParamRef); ok {
+				number = pr.Number
+			}
+
+			for _, table := range tables {
+				schema := table.Schema
+				if schema == "" {
+					schema = c.DefaultSchema
+				}
+
+				if c, ok := typeMap[schema][table.Name][key]; ok {
+					a = append(a, Parameter{
+						Number: number,
+						Column: &Column{
+							Name:         parameterName(ref.ref.Number, key),
+							DataType:     dataType(&c.Type),
+							NotNull:      c.IsNotNull,
+							IsArray:      c.IsArray,
+							Table:        table,
+							IsNamedParam: isNamedParam(ref.ref.Number),
+						},
+					})
 				}
 			}
 
@@ -252,8 +310,9 @@ func resolveCatalogRefs(c *catalog.Catalog, qc *QueryCatalog, rvs []*ast.RangeVa
 					a = append(a, Parameter{
 						Number: ref.ref.Number,
 						Column: &Column{
-							Name:     parameterName(ref.ref.Number, defaultName),
-							DataType: "any",
+							Name:         parameterName(ref.ref.Number, defaultName),
+							DataType:     "any",
+							IsNamedParam: isNamedParam(ref.ref.Number),
 						},
 					})
 					continue
@@ -282,9 +341,10 @@ func resolveCatalogRefs(c *catalog.Catalog, qc *QueryCatalog, rvs []*ast.RangeVa
 				a = append(a, Parameter{
 					Number: ref.ref.Number,
 					Column: &Column{
-						Name:     parameterName(ref.ref.Number, paramName),
-						DataType: dataType(paramType),
-						NotNull:  true,
+						Name:         parameterName(ref.ref.Number, paramName),
+						DataType:     dataType(paramType),
+						NotNull:      true,
+						IsNamedParam: isNamedParam(ref.ref.Number),
 					},
 				})
 			}
@@ -340,12 +400,13 @@ func resolveCatalogRefs(c *catalog.Catalog, qc *QueryCatalog, rvs []*ast.RangeVa
 				a = append(a, Parameter{
 					Number: ref.ref.Number,
 					Column: &Column{
-						Name:     parameterName(ref.ref.Number, key),
-						DataType: dataType(&c.Type),
-						NotNull:  c.IsNotNull,
-						IsArray:  c.IsArray,
-						Table:    &ast.TableName{Schema: schema, Name: rel},
-						Length:   c.Length,
+						Name:         parameterName(ref.ref.Number, key),
+						DataType:     dataType(&c.Type),
+						NotNull:      c.IsNotNull,
+						IsArray:      c.IsArray,
+						Table:        &ast.TableName{Schema: schema, Name: rel},
+						Length:       c.Length,
+						IsNamedParam: isNamedParam(ref.ref.Number),
 					},
 				})
 			} else {
@@ -369,6 +430,105 @@ func resolveCatalogRefs(c *catalog.Catalog, qc *QueryCatalog, rvs []*ast.RangeVa
 
 		case *ast.ParamRef:
 			a = append(a, Parameter{Number: ref.ref.Number})
+
+		case *ast.In:
+			if n == nil || n.List == nil {
+				fmt.Println("ast.In is nil")
+				continue
+			}
+
+			number := 0
+			if pr, ok := n.List[0].(*ast.ParamRef); ok {
+				number = pr.Number
+			}
+
+			location := 0
+			var key, alias string
+			var items []string
+
+			if left, ok := n.Expr.(*ast.ColumnRef); ok {
+				location = left.Location
+				items = stringSlice(left.Fields)
+			} else if left, ok := n.Expr.(*ast.ParamRef); ok {
+				if len(n.List) <= 0 {
+					continue
+				}
+				if right, ok := n.List[0].(*ast.ColumnRef); ok {
+					location = left.Location
+					items = stringSlice(right.Fields)
+				} else {
+					continue
+				}
+			} else {
+				continue
+			}
+
+			switch len(items) {
+			case 1:
+				key = items[0]
+			case 2:
+				alias = items[0]
+				key = items[1]
+			default:
+				panic("too many field items: " + strconv.Itoa(len(items)))
+			}
+
+			var found int
+			if n.Sel == nil {
+				search := tables
+				if alias != "" {
+					if original, ok := aliasMap[alias]; ok {
+						search = []*ast.TableName{original}
+					} else {
+						for _, fqn := range tables {
+							if fqn.Name == alias {
+								search = []*ast.TableName{fqn}
+							}
+						}
+					}
+				}
+
+				for _, table := range search {
+					schema := table.Schema
+					if schema == "" {
+						schema = c.DefaultSchema
+					}
+					if c, ok := typeMap[schema][table.Name][key]; ok {
+						found += 1
+						if ref.name != "" {
+							key = ref.name
+						}
+						a = append(a, Parameter{
+							Number: number,
+							Column: &Column{
+								Name:         parameterName(ref.ref.Number, key),
+								DataType:     dataType(&c.Type),
+								NotNull:      c.IsNotNull,
+								IsArray:      c.IsArray,
+								Table:        table,
+								IsNamedParam: isNamedParam(ref.ref.Number),
+							},
+						})
+					}
+				}
+			} else {
+				fmt.Println("------------------------")
+			}
+
+			if found == 0 {
+				return nil, &sqlerr.Error{
+					Code:     "42703",
+					Message:  fmt.Sprintf("396: column \"%s\" does not exist", key),
+					Location: location,
+				}
+			}
+			if found > 1 {
+				return nil, &sqlerr.Error{
+					Code:     "42703",
+					Message:  fmt.Sprintf("in same name column reference \"%s\" is ambiguous", key),
+					Location: location,
+				}
+			}
 
 		default:
 			fmt.Printf("unsupported reference type: %T", n)

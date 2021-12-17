@@ -14,7 +14,15 @@ brew install sqlc
 sudo snap install sqlc
 ```
 
-## go get
+## go install 
+
+### Go >= 1.17:
+
+```
+go install github.com/kyleconroy/sqlc/cmd/sqlc@latest
+```
+
+### Go < 1.17:
 
 ```
 go get github.com/kyleconroy/sqlc/cmd/sqlc
