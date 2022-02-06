@@ -160,6 +160,7 @@ func buildQueries(r *compiler.Result, settings config.CombinedSettings, structs 
 			SourceName:   query.Filename,
 			SQL:          query.SQL,
 			Comments:     query.Comments,
+			Table:        query.InsertIntoTable,
 		}
 		sqlpkg := SQLPackageFromString(settings.Go.SQLPackage)
 
@@ -193,8 +194,12 @@ func buildQueries(r *compiler.Result, settings config.CombinedSettings, structs 
 
 		if len(query.Columns) == 1 {
 			c := query.Columns[0]
+			name := columnName(c, 0)
+			if c.IsFuncCall {
+				name = strings.Replace(name, "$", "_", -1)
+			}
 			gq.Ret = QueryValue{
-				Name:       columnName(c, 0),
+				Name:       name,
 				Typ:        goType(r, c, settings),
 				SQLPackage: sqlpkg,
 			}
@@ -291,9 +296,10 @@ func columnsToStruct(r *compiler.Result, name string, columns []goColumn, settin
 			tags["json:"] = JSONTagName(tagName, settings)
 		}
 		gs.Fields = append(gs.Fields, Field{
-			Name: fieldName,
-			Type: goType(r, c.Column, settings),
-			Tags: tags,
+			Name:   fieldName,
+			DBName: colName,
+			Type:   goType(r, c.Column, settings),
+			Tags:   tags,
 		})
 		if _, found := seen[baseFieldName]; !found {
 			seen[baseFieldName] = []int{i}

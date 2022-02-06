@@ -110,6 +110,7 @@ func (c *Catalog) alterTableSetSchema(stmt *ast.AlterTableSetSchemaStmt) error {
 	if err != nil {
 		return err
 	}
+	tbl.Rel.Schema = *stmt.NewSchema
 	newSchema, err := c.getSchema(*stmt.NewSchema)
 	if err != nil {
 		return err
@@ -139,6 +140,13 @@ func (c *Catalog) createTable(stmt *ast.CreateTableStmt) error {
 	}
 
 	tbl := Table{Rel: stmt.Name, Comment: stmt.Comment}
+	for _, inheritTable := range stmt.Inherits {
+		t, _, err := schema.getTable(inheritTable)
+		if err != nil {
+			return err
+		}
+		tbl.Columns = append(tbl.Columns, t.Columns...)
+	}
 
 	if stmt.ReferTable != nil && len(stmt.Cols) != 0 {
 		return errors.New("create table node cannot have both a ReferTable and Cols")

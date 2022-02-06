@@ -89,6 +89,7 @@ func (i *importer) Imports(filename string) [][]ImportSpec {
 	if i.Settings.Go.OutputQuerierFileName != "" {
 		querierFileName = i.Settings.Go.OutputQuerierFileName
 	}
+	copyfromFileName := "copyfrom.go"
 
 	switch filename {
 	case dbFileName:
@@ -97,6 +98,8 @@ func (i *importer) Imports(filename string) [][]ImportSpec {
 		return mergeImports(i.modelImports())
 	case querierFileName:
 		return mergeImports(i.interfaceImports())
+	case copyfromFileName:
+		return mergeImports(i.copyfromImports())
 	default:
 		return mergeImports(i.queryImports(filename))
 	}
@@ -279,9 +282,13 @@ func sortedImports(std map[string]struct{}, pkg map[ImportSpec]struct{}) fileImp
 
 func (i *importer) queryImports(filename string) fileImports {
 	var gq []Query
+	anyNonCopyFrom := false
 	for _, query := range i.Queries {
 		if query.SourceName == filename {
 			gq = append(gq, query)
+			if query.Cmd != metadata.CmdCopyFrom {
+				anyNonCopyFrom = true
+			}
 		}
 	}
 
@@ -349,12 +356,39 @@ func (i *importer) queryImports(filename string) fileImports {
 		return false
 	}
 
-	std["context"] = struct{}{}
+	if anyNonCopyFrom {
+		std["context"] = struct{}{}
+	}
 
 	sqlpkg := SQLPackageFromString(i.Settings.Go.SQLPackage)
 	if sliceScan() && sqlpkg != SQLPackagePGX {
 		pkg[ImportSpec{Path: "github.com/lib/pq"}] = struct{}{}
 	}
+
+	return sortedImports(std, pkg)
+}
+
+func (i *importer) copyfromImports() fileImports {
+	std, pkg := buildImports(i.Settings, i.Queries, func(name string) bool {
+		for _, q := range i.Queries {
+			if q.Cmd != metadata.CmdCopyFrom {
+				continue
+			}
+			if q.hasRetType() {
+				if strings.HasPrefix(q.Ret.Type(), name) {
+					return true
+				}
+			}
+			if !q.Arg.isEmpty() {
+				if strings.HasPrefix(q.Arg.Type(), name) {
+					return true
+				}
+			}
+		}
+		return false
+	})
+
+	std["context"] = struct{}{}
 
 	return sortedImports(std, pkg)
 }
