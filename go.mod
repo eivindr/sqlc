@@ -12,7 +12,7 @@ require (
 	github.com/lib/pq v1.10.4
 	github.com/pganalyze/pg_query_go/v2 v2.1.0
 	github.com/pingcap/parser v0.0.0-20210914110036-002913dd28ec
-	github.com/spf13/cobra v1.3.0
+	github.com/spf13/cobra v1.4.0
 	github.com/spf13/pflag v1.0.5
 	google.golang.org/protobuf v1.27.1
 	gopkg.in/yaml.v3 v3.0.0-20210107192922-496545a6307b
