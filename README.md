@@ -47,7 +47,7 @@ Also note that if the iter function return an error, the streaming query will cl
 
 ### Building this fork
 
-Clone and run `go build ./cmd/sqlc/main.go` from withing the project root.
+Clone and run `go build ./cmd/sqlc/main.go` from the project root.
 
 ## Overview
 
@@ -66,6 +66,7 @@ companies:
 - [Meter](https://meter.com)
 - [ngrok](https://ngrok.com)
 - [RStudio](https://www.rstudio.com/)
+- [時雨堂](https://shiguredo.jp/)
 
 If you use sqlc at your company, please consider [becoming a
 sponsor](https://github.com/sponsors/kyleconroy) today.

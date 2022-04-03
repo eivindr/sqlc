@@ -1,18 +1,42 @@
 package golang
 
 import (
+	"fmt"
 	"log"
+	"strings"
 
-	"github.com/kyleconroy/sqlc/internal/compiler"
-	"github.com/kyleconroy/sqlc/internal/config"
+	"github.com/kyleconroy/sqlc/internal/codegen/sdk"
 	"github.com/kyleconroy/sqlc/internal/debug"
-	"github.com/kyleconroy/sqlc/internal/sql/catalog"
+	"github.com/kyleconroy/sqlc/internal/plugin"
 )
 
-func postgresType(r *compiler.Result, col *compiler.Column, settings config.CombinedSettings) string {
-	columnType := col.DataType
+func parseIdentifierString(name string) (*plugin.Identifier, error) {
+	parts := strings.Split(name, ".")
+	switch len(parts) {
+	case 1:
+		return &plugin.Identifier{
+			Name: parts[0],
+		}, nil
+	case 2:
+		return &plugin.Identifier{
+			Schema: parts[0],
+			Name:   parts[1],
+		}, nil
+	case 3:
+		return &plugin.Identifier{
+			Catalog: parts[0],
+			Schema:  parts[1],
+			Name:    parts[2],
+		}, nil
+	default:
+		return nil, fmt.Errorf("invalid name: %s", name)
+	}
+}
+
+func postgresType(req *plugin.CodeGenRequest, col *plugin.Column) string {
+	columnType := sdk.DataType(col.Type)
 	notNull := col.NotNull || col.IsArray
-	driver := parseDriver(settings)
+	driver := parseDriver(req.Settings)
 
 	switch columnType {
 	case "serial", "serial4", "pg_catalog.serial4":
@@ -240,29 +264,31 @@ func postgresType(r *compiler.Result, col *compiler.Column, settings config.Comb
 		return "interface{}"
 
 	default:
-		rel, err := compiler.ParseRelationString(columnType)
+		rel, err := parseIdentifierString(columnType)
 		if err != nil {
 			// TODO: Should this actually return an error here?
 			return "interface{}"
 		}
 		if rel.Schema == "" {
-			rel.Schema = r.Catalog.DefaultSchema
+			rel.Schema = req.Catalog.DefaultSchema
 		}
 
-		for _, schema := range r.Catalog.Schemas {
+		for _, schema := range req.Catalog.Schemas {
 			if schema.Name == "pg_catalog" {
 				continue
 			}
-			for _, typ := range schema.Types {
-				switch t := typ.(type) {
-				case *catalog.Enum:
-					if rel.Name == t.Name && rel.Schema == schema.Name {
-						if schema.Name == r.Catalog.DefaultSchema {
-							return StructName(t.Name, settings)
-						}
-						return StructName(schema.Name+"_"+t.Name, settings)
+
+			for _, enum := range schema.Enums {
+				if rel.Name == enum.Name && rel.Schema == schema.Name {
+					if schema.Name == req.Catalog.DefaultSchema {
+						return StructName(enum.Name, req.Settings)
 					}
-				case *catalog.CompositeType:
+					return StructName(schema.Name+"_"+enum.Name, req.Settings)
+				}
+			}
+
+			for _, ct := range schema.CompositeTypes {
+				if rel.Name == ct.Name && rel.Schema == schema.Name {
 					if notNull {
 						return "string"
 					}

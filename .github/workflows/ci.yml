@@ -30,11 +30,11 @@ jobs:
         - 3306:3306
 
     steps:
-    - uses: actions/checkout@v2.4.0
+    - uses: actions/checkout@v3
 
     - uses: actions/setup-go@v2
       with:
-        go-version: '1.17'
+        go-version: '1.18'
 
     - name: test ./...
       run: go test --tags=examples ./...
@@ -51,8 +51,4 @@ jobs:
 
     - name: build internal/endtoend
       run: go build ./...
-      working-directory: internal/endtoend/testdata
-
-    - name: test internal/endtoend
-      run: go test ./...
       working-directory: internal/endtoend/testdata

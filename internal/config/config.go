@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/kyleconroy/sqlc/internal/pattern"
 	"github.com/kyleconroy/sqlc/internal/sql/ast"
 
 	yaml "gopkg.in/yaml.v3"
@@ -77,9 +78,14 @@ const (
 )
 
 type Config struct {
-	Version string `json:"version" yaml:"version"`
-	SQL     []SQL  `json:"sql" yaml:"sql"`
-	Gen     Gen    `json:"overrides,omitempty" yaml:"overrides"`
+	Version string  `json:"version" yaml:"version"`
+	Project Project `json:"project" yaml:"project"`
+	SQL     []SQL   `json:"sql" yaml:"sql"`
+	Gen     Gen     `json:"overrides,omitempty" yaml:"overrides"`
+}
+
+type Project struct {
+	ID string `json:"id" yaml:"id"`
 }
 
 type Gen struct {
@@ -170,10 +176,10 @@ type Override struct {
 	// fully qualified name of the column, e.g. `accounts.id`
 	Column string `json:"column" yaml:"column"`
 
-	ColumnName   *Match
-	TableCatalog *Match
-	TableSchema  *Match
-	TableRel     *Match
+	ColumnName   *pattern.Match
+	TableCatalog *pattern.Match
+	TableSchema  *pattern.Match
+	TableRel     *pattern.Match
 	GoImportPath string
 	GoPackage    string
 	GoTypeName   string
@@ -243,36 +249,36 @@ func (o *Override) Parse() (err error) {
 		colParts := strings.Split(o.Column, ".")
 		switch len(colParts) {
 		case 2:
-			if o.ColumnName, err = MatchCompile(colParts[1]); err != nil {
+			if o.ColumnName, err = pattern.MatchCompile(colParts[1]); err != nil {
 				return err
 			}
-			if o.TableRel, err = MatchCompile(colParts[0]); err != nil {
+			if o.TableRel, err = pattern.MatchCompile(colParts[0]); err != nil {
 				return err
 			}
-			if o.TableSchema, err = MatchCompile("public"); err != nil {
+			if o.TableSchema, err = pattern.MatchCompile("public"); err != nil {
 				return err
 			}
 		case 3:
-			if o.ColumnName, err = MatchCompile(colParts[2]); err != nil {
+			if o.ColumnName, err = pattern.MatchCompile(colParts[2]); err != nil {
 				return err
 			}
-			if o.TableRel, err = MatchCompile(colParts[1]); err != nil {
+			if o.TableRel, err = pattern.MatchCompile(colParts[1]); err != nil {
 				return err
 			}
-			if o.TableSchema, err = MatchCompile(colParts[0]); err != nil {
+			if o.TableSchema, err = pattern.MatchCompile(colParts[0]); err != nil {
 				return err
 			}
 		case 4:
-			if o.ColumnName, err = MatchCompile(colParts[3]); err != nil {
+			if o.ColumnName, err = pattern.MatchCompile(colParts[3]); err != nil {
 				return err
 			}
-			if o.TableRel, err = MatchCompile(colParts[2]); err != nil {
+			if o.TableRel, err = pattern.MatchCompile(colParts[2]); err != nil {
 				return err
 			}
-			if o.TableSchema, err = MatchCompile(colParts[1]); err != nil {
+			if o.TableSchema, err = pattern.MatchCompile(colParts[1]); err != nil {
 				return err
 			}
-			if o.TableCatalog, err = MatchCompile(colParts[0]); err != nil {
+			if o.TableCatalog, err = pattern.MatchCompile(colParts[0]); err != nil {
 				return err
 			}
 		default:
@@ -326,7 +332,7 @@ func ParseConfig(rd io.Reader) (Config, error) {
 	}
 }
 
-func Validate(c Config) error {
+func Validate(c *Config) error {
 	for _, sql := range c.SQL {
 		sqlGo := sql.Gen.Go
 		if sqlGo == nil {

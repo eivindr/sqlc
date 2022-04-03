@@ -4,12 +4,12 @@ import (
 	"log"
 	"strings"
 
-	"github.com/kyleconroy/sqlc/internal/compiler"
-	"github.com/kyleconroy/sqlc/internal/config"
+	"github.com/kyleconroy/sqlc/internal/codegen/sdk"
+	"github.com/kyleconroy/sqlc/internal/plugin"
 )
 
-func sqliteType(r *compiler.Result, col *compiler.Column, settings config.CombinedSettings) string {
-	dt := strings.ToLower(col.DataType)
+func sqliteType(req *plugin.CodeGenRequest, col *plugin.Column) string {
+	dt := strings.ToLower(sdk.DataType(col.Type))
 	notNull := col.NotNull || col.IsArray
 
 	switch dt {

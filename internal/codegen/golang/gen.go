@@ -9,26 +9,19 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/kyleconroy/sqlc/internal/codegen"
-	"github.com/kyleconroy/sqlc/internal/compiler"
-	"github.com/kyleconroy/sqlc/internal/config"
+	"github.com/kyleconroy/sqlc/internal/codegen/sdk"
 	"github.com/kyleconroy/sqlc/internal/metadata"
+	"github.com/kyleconroy/sqlc/internal/plugin"
 )
 
-type Generateable interface {
-	Structs(settings config.CombinedSettings) []Struct
-	GoQueries(settings config.CombinedSettings) []Query
-	Enums(settings config.CombinedSettings) []Enum
-}
-
 type tmplCtx struct {
-	Q          string
-	Package    string
-	SQLPackage SQLPackage
-	Enums      []Enum
-	Structs    []Struct
-	GoQueries  []Query
-	Settings   config.Config
+	Q           string
+	Package     string
+	SQLPackage  SQLPackage
+	Enums       []Enum
+	Structs     []Struct
+	GoQueries   []Query
+	SqlcVersion string
 
 	// TODO: Race conditions
 	SourceName string
@@ -40,35 +33,37 @@ type tmplCtx struct {
 	EmitEmptySlices           bool
 	EmitMethodsWithDBArgument bool
 	UsesCopyFrom              bool
+	UsesBatch                 bool
 }
 
 func (t *tmplCtx) OutputQuery(sourceName string) bool {
 	return t.SourceName == sourceName
 }
 
-func Generate(r *compiler.Result, settings config.CombinedSettings) (map[string]string, error) {
-	enums := buildEnums(r, settings)
-	structs := buildStructs(r, settings)
-	queries, err := buildQueries(r, settings, structs)
+func Generate(req *plugin.CodeGenRequest) (*plugin.CodeGenResponse, error) {
+	enums := buildEnums(req)
+	structs := buildStructs(req)
+	queries, err := buildQueries(req, structs)
 	if err != nil {
 		return nil, err
 	}
-	return generate(settings, enums, structs, queries)
+	return generate(req, enums, structs, queries)
 }
 
-func generate(settings config.CombinedSettings, enums []Enum, structs []Struct, queries []Query) (map[string]string, error) {
+func generate(req *plugin.CodeGenRequest, enums []Enum, structs []Struct, queries []Query) (*plugin.CodeGenResponse, error) {
 	i := &importer{
-		Settings: settings,
+		Settings: req.Settings,
 		Queries:  queries,
 		Enums:    enums,
 		Structs:  structs,
 	}
 
 	funcMap := template.FuncMap{
-		"lowerTitle": codegen.LowerTitle,
-		"comment":    codegen.DoubleSlashComment,
-		"escape":     codegen.EscapeBacktick,
+		"lowerTitle": sdk.LowerTitle,
+		"comment":    sdk.DoubleSlashComment,
+		"escape":     sdk.EscapeBacktick,
 		"imports":    i.Imports,
+		"hasPrefix":  strings.HasPrefix,
 	}
 
 	tmpl := template.Must(
@@ -81,26 +76,31 @@ func generate(settings config.CombinedSettings, enums []Enum, structs []Struct, 
 			),
 	)
 
-	golang := settings.Go
+	golang := req.Settings.Go
 	tctx := tmplCtx{
-		Settings:                  settings.Global,
 		EmitInterface:             golang.EmitInterface,
-		EmitJSONTags:              golang.EmitJSONTags,
-		EmitDBTags:                golang.EmitDBTags,
+		EmitJSONTags:              golang.EmitJsonTags,
+		EmitDBTags:                golang.EmitDbTags,
 		EmitPreparedQueries:       golang.EmitPreparedQueries,
 		EmitEmptySlices:           golang.EmitEmptySlices,
-		EmitMethodsWithDBArgument: golang.EmitMethodsWithDBArgument,
+		EmitMethodsWithDBArgument: golang.EmitMethodsWithDbArgument,
 		UsesCopyFrom:              usesCopyFrom(queries),
-		SQLPackage:                SQLPackageFromString(golang.SQLPackage),
+		UsesBatch:                 usesBatch(queries),
+		SQLPackage:                SQLPackageFromString(golang.SqlPackage),
 		Q:                         "`",
 		Package:                   golang.Package,
 		GoQueries:                 queries,
 		Enums:                     enums,
 		Structs:                   structs,
+		SqlcVersion:               req.SqlcVersion,
 	}
 
 	if tctx.UsesCopyFrom && tctx.SQLPackage != SQLPackagePGX {
 		return nil, errors.New(":copyfrom is only supported by pgx")
+	}
+
+	if tctx.UsesBatch && tctx.SQLPackage != SQLPackagePGX {
+		return nil, errors.New(":batch* commands are only supported by pgx")
 	}
 
 	output := map[string]string{}
@@ -132,8 +132,8 @@ func generate(settings config.CombinedSettings, enums []Enum, structs []Struct, 
 	}
 
 	dbFileName := "db.go"
-	if golang.OutputDBFileName != "" {
-		dbFileName = golang.OutputDBFileName
+	if golang.OutputDbFileName != "" {
+		dbFileName = golang.OutputDbFileName
 	}
 	modelsFileName := "models.go"
 	if golang.OutputModelsFileName != "" {
@@ -145,6 +145,8 @@ func generate(settings config.CombinedSettings, enums []Enum, structs []Struct, 
 	}
 	copyfromFileName := "copyfrom.go"
 	// TODO(Jille): Make this configurable.
+
+	batchFileName := "batch.go"
 
 	if err := execute(dbFileName, "dbFile"); err != nil {
 		return nil, err
@@ -162,6 +164,11 @@ func generate(settings config.CombinedSettings, enums []Enum, structs []Struct, 
 			return nil, err
 		}
 	}
+	if tctx.UsesBatch {
+		if err := execute(batchFileName, "batchFile"); err != nil {
+			return nil, err
+		}
+	}
 
 	files := map[string]struct{}{}
 	for _, gq := range queries {
@@ -173,13 +180,33 @@ func generate(settings config.CombinedSettings, enums []Enum, structs []Struct, 
 			return nil, err
 		}
 	}
-	return output, nil
+	resp := plugin.CodeGenResponse{}
+
+	for filename, code := range output {
+		resp.Files = append(resp.Files, &plugin.File{
+			Name:     filename,
+			Contents: []byte(code),
+		})
+	}
+
+	return &resp, nil
 }
 
 func usesCopyFrom(queries []Query) bool {
 	for _, q := range queries {
 		if q.Cmd == metadata.CmdCopyFrom {
 			return true
+		}
+	}
+	return false
+}
+
+func usesBatch(queries []Query) bool {
+	for _, q := range queries {
+		for _, cmd := range []string{metadata.CmdBatchExec, metadata.CmdBatchMany, metadata.CmdBatchOne} {
+			if q.Cmd == cmd {
+				return true
+			}
 		}
 	}
 	return false
