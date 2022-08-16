@@ -67,9 +67,7 @@ func (p *Paths) UnmarshalYAML(unmarshal func(interface{}) error) error {
 const (
 	EngineMySQL      Engine = "mysql"
 	EnginePostgreSQL Engine = "postgresql"
-
-	// Experimental engines
-	EngineXLemon Engine = "_lemon"
+	EngineSQLite     Engine = "sqlite"
 )
 
 type Config struct {
@@ -90,7 +88,8 @@ type Plugin struct {
 		Cmd string `json:"cmd" yaml:"cmd"`
 	} `json:"process" yaml:"process"`
 	WASM *struct {
-		URL string `json:"url" yaml:"url"`
+		URL    string `json:"url" yaml:"url"`
+		SHA256 string `json:"sha256" yaml:"sha256"`
 	} `json:"wasm" yaml:"wasm"`
 }
 
