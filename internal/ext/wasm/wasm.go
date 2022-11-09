@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/sha256"
 	_ "embed"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -25,7 +26,7 @@ import (
 )
 
 // This version must be updated whenever the wasmtime-go dependency is updated
-const wasmtimeVersion = `v0.39.0`
+const wasmtimeVersion = `v1.0.0`
 
 func cacheDir() (string, error) {
 	cache := os.Getenv("SQLCCACHE")
@@ -175,7 +176,31 @@ func (r *Runner) loadWASM(ctx context.Context, cache string, expected string) ([
 	return wmod, nil
 }
 
+// removePGCatalog removes the pg_catalog schema from the request. There is a
+// mysterious (reason unknown) bug with wasm plugins when a large amount of
+// tables (like there are in the catalog) are sent.
+// @see https://github.com/kyleconroy/sqlc/pull/1748
+func removePGCatalog(req *plugin.CodeGenRequest) {
+	if req.Catalog == nil || req.Catalog.Schemas == nil {
+		return
+	}
+
+	filtered := make([]*plugin.Schema, 0, len(req.Catalog.Schemas))
+	for _, schema := range req.Catalog.Schemas {
+		if schema.Name == "pg_catalog" || schema.Name == "information_schema" {
+			continue
+		}
+
+		filtered = append(filtered, schema)
+	}
+
+	req.Catalog.Schemas = filtered
+}
+
 func (r *Runner) Generate(ctx context.Context, req *plugin.CodeGenRequest) (*plugin.CodeGenResponse, error) {
+	// Remove the pg_catalog schema. Its sheer size causes unknown issues with wasm plugins
+	removePGCatalog(req)
+
 	stdinBlob, err := req.MarshalVT()
 	if err != nil {
 		return nil, err
@@ -228,6 +253,11 @@ func (r *Runner) Generate(ctx context.Context, req *plugin.CodeGenRequest) (*plu
 	_, err = nom.Call(store)
 	callRegion.End()
 	if err != nil {
+		// Print WASM stdout
+		stderrBlob, err := os.ReadFile(stderrPath)
+		if err == nil && len(stderrBlob) > 0 {
+			return nil, errors.New(string(stderrBlob))
+		}
 		return nil, fmt.Errorf("call: %w", err)
 	}
 

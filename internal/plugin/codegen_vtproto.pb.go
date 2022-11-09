@@ -526,6 +526,20 @@ func (m *PythonCode) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
+	if len(m.InflectionExcludeTableNames) > 0 {
+		for iNdEx := len(m.InflectionExcludeTableNames) - 1; iNdEx >= 0; iNdEx-- {
+			i -= len(m.InflectionExcludeTableNames[iNdEx])
+			copy(dAtA[i:], m.InflectionExcludeTableNames[iNdEx])
+			i = encodeVarint(dAtA, i, uint64(len(m.InflectionExcludeTableNames[iNdEx])))
+			i--
+			dAtA[i] = 0x42
+		}
+	}
+	if m.QueryParameterLimit != nil {
+		i = encodeVarint(dAtA, i, uint64(*m.QueryParameterLimit))
+		i--
+		dAtA[i] = 0x38
+	}
 	if m.EmitPydanticModels {
 		i--
 		if m.EmitPydanticModels {
@@ -613,6 +627,15 @@ func (m *KotlinCode) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
+	if len(m.InflectionExcludeTableNames) > 0 {
+		for iNdEx := len(m.InflectionExcludeTableNames) - 1; iNdEx >= 0; iNdEx-- {
+			i -= len(m.InflectionExcludeTableNames[iNdEx])
+			copy(dAtA[i:], m.InflectionExcludeTableNames[iNdEx])
+			i = encodeVarint(dAtA, i, uint64(len(m.InflectionExcludeTableNames[iNdEx])))
+			i--
+			dAtA[i] = 0x22
+		}
+	}
 	if len(m.Out) > 0 {
 		i -= len(m.Out)
 		copy(dAtA[i:], m.Out)
@@ -669,6 +692,17 @@ func (m *GoCode) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 	if m.unknownFields != nil {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
+	}
+	if len(m.InflectionExcludeTableNames) > 0 {
+		for iNdEx := len(m.InflectionExcludeTableNames) - 1; iNdEx >= 0; iNdEx-- {
+			i -= len(m.InflectionExcludeTableNames[iNdEx])
+			copy(dAtA[i:], m.InflectionExcludeTableNames[iNdEx])
+			i = encodeVarint(dAtA, i, uint64(len(m.InflectionExcludeTableNames[iNdEx])))
+			i--
+			dAtA[i] = 0x1
+			i--
+			dAtA[i] = 0xaa
+		}
 	}
 	if m.EmitAllEnumValues {
 		i--
@@ -1589,6 +1623,13 @@ func (m *CodeGenRequest) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
+	if len(m.PluginOptions) > 0 {
+		i -= len(m.PluginOptions)
+		copy(dAtA[i:], m.PluginOptions)
+		i = encodeVarint(dAtA, i, uint64(len(m.PluginOptions)))
+		i--
+		dAtA[i] = 0x2a
+	}
 	if len(m.SqlcVersion) > 0 {
 		i -= len(m.SqlcVersion)
 		copy(dAtA[i:], m.SqlcVersion)
@@ -1921,6 +1962,15 @@ func (m *PythonCode) SizeVT() (n int) {
 	if m.EmitPydanticModels {
 		n += 2
 	}
+	if m.QueryParameterLimit != nil {
+		n += 1 + sov(uint64(*m.QueryParameterLimit))
+	}
+	if len(m.InflectionExcludeTableNames) > 0 {
+		for _, s := range m.InflectionExcludeTableNames {
+			l = len(s)
+			n += 1 + l + sov(uint64(l))
+		}
+	}
 	if m.unknownFields != nil {
 		n += len(m.unknownFields)
 	}
@@ -1943,6 +1993,12 @@ func (m *KotlinCode) SizeVT() (n int) {
 	l = len(m.Out)
 	if l > 0 {
 		n += 1 + l + sov(uint64(l))
+	}
+	if len(m.InflectionExcludeTableNames) > 0 {
+		for _, s := range m.InflectionExcludeTableNames {
+			l = len(s)
+			n += 1 + l + sov(uint64(l))
+		}
 	}
 	if m.unknownFields != nil {
 		n += len(m.unknownFields)
@@ -2023,6 +2079,12 @@ func (m *GoCode) SizeVT() (n int) {
 	}
 	if m.EmitAllEnumValues {
 		n += 3
+	}
+	if len(m.InflectionExcludeTableNames) > 0 {
+		for _, s := range m.InflectionExcludeTableNames {
+			l = len(s)
+			n += 2 + l + sov(uint64(l))
+		}
 	}
 	if m.unknownFields != nil {
 		n += len(m.unknownFields)
@@ -2359,6 +2421,10 @@ func (m *CodeGenRequest) SizeVT() (n int) {
 		}
 	}
 	l = len(m.SqlcVersion)
+	if l > 0 {
+		n += 1 + l + sov(uint64(l))
+	}
+	l = len(m.PluginOptions)
 	if l > 0 {
 		n += 1 + l + sov(uint64(l))
 	}
@@ -4067,6 +4133,58 @@ func (m *PythonCode) UnmarshalVT(dAtA []byte) error {
 				}
 			}
 			m.EmitPydanticModels = bool(v != 0)
+		case 7:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field QueryParameterLimit", wireType)
+			}
+			var v int32
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int32(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.QueryParameterLimit = &v
+		case 8:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field InflectionExcludeTableNames", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLength
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLength
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.InflectionExcludeTableNames = append(m.InflectionExcludeTableNames, string(dAtA[iNdEx:postIndex]))
+			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
 			skippy, err := skip(dAtA[iNdEx:])
@@ -4201,6 +4319,38 @@ func (m *KotlinCode) UnmarshalVT(dAtA []byte) error {
 				return io.ErrUnexpectedEOF
 			}
 			m.Out = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 4:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field InflectionExcludeTableNames", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLength
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLength
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.InflectionExcludeTableNames = append(m.InflectionExcludeTableNames, string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -4749,6 +4899,38 @@ func (m *GoCode) UnmarshalVT(dAtA []byte) error {
 				}
 			}
 			m.EmitAllEnumValues = bool(v != 0)
+		case 21:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field InflectionExcludeTableNames", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLength
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLength
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.InflectionExcludeTableNames = append(m.InflectionExcludeTableNames, string(dAtA[iNdEx:postIndex]))
+			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
 			skippy, err := skip(dAtA[iNdEx:])
@@ -6815,6 +6997,40 @@ func (m *CodeGenRequest) UnmarshalVT(dAtA []byte) error {
 				return io.ErrUnexpectedEOF
 			}
 			m.SqlcVersion = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 5:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field PluginOptions", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLength
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLength
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.PluginOptions = append(m.PluginOptions[:0], dAtA[iNdEx:postIndex]...)
+			if m.PluginOptions == nil {
+				m.PluginOptions = []byte{}
+			}
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
