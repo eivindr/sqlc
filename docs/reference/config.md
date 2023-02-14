@@ -84,7 +84,7 @@ The `gen` mapping supports the following keys:
 - `out`:
   - Output directory for generated code.
 - `sql_package`:
-  - Either `pgx/v4` or `database/sql`. Defaults to `database/sql`.
+  - Either `pgx/v4`, `pgx/v5` or `database/sql`. Defaults to `database/sql`.
 - `emit_db_tags`:
   - If true, add DB tags to generated structs. Defaults to `false`.
 - `emit_prepared_queries`:
@@ -339,6 +339,7 @@ packages:
     emit_result_struct_pointers: false
     emit_params_struct_pointers: false
     emit_methods_with_db_argument: false
+    emit_pointers_for_null_types: false
     emit_enum_valid_method: false
     emit_all_enum_values: false
     json_tags_case_style: "camel"
@@ -362,7 +363,7 @@ Each mapping in the `packages` collection has the following keys:
 - `engine`:
   - Either `postgresql` or `mysql`. Defaults to `postgresql`.
 - `sql_package`:
-  - Either `pgx/v4` or `database/sql`. Defaults to `database/sql`.
+  - Either `pgx/v4`, `pgx/v5` or `database/sql`. Defaults to `database/sql`.
 - `emit_db_tags`:
   - If true, add DB tags to generated structs. Defaults to `false`.
 - `emit_prepared_queries`:
@@ -383,6 +384,8 @@ Each mapping in the `packages` collection has the following keys:
   - If true, parameters are passed as pointers to structs. Defaults to `false`.
 - `emit_methods_with_db_argument`:
   - If true, generated methods will accept a DBTX argument instead of storing a DBTX on the `*Queries` struct. Defaults to `false`.
+- `emit_pointers_for_null_types`:
+  - If true and `sql_package` is set to `pgx/v4`, generated types for nullable columns are emitted as pointers (ie. `*string`) instead of `database/sql` null types (ie. `NullString`). Defaults to `false`.
 - `emit_enum_valid_method`:
   - If true, generate a Valid method on enum types,
     indicating whether a string is a valid enum value.

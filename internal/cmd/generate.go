@@ -8,13 +8,15 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"runtime/trace"
 	"strings"
+	"sync"
+
+	"golang.org/x/sync/errgroup"
 
 	"github.com/kyleconroy/sqlc/internal/codegen/golang"
 	"github.com/kyleconroy/sqlc/internal/codegen/json"
-	"github.com/kyleconroy/sqlc/internal/codegen/kotlin"
-	"github.com/kyleconroy/sqlc/internal/codegen/python"
 	"github.com/kyleconroy/sqlc/internal/compiler"
 	"github.com/kyleconroy/sqlc/internal/config"
 	"github.com/kyleconroy/sqlc/internal/config/convert"
@@ -131,6 +133,11 @@ func Generate(ctx context.Context, e Env, dir, filename string, stderr io.Writer
 		return nil, err
 	}
 
+	if err := e.Validate(conf); err != nil {
+		fmt.Fprintf(stderr, "error validating %s: %s\n", base, err)
+		return nil, err
+	}
+
 	output := map[string]string{}
 	errored := false
 
@@ -140,18 +147,6 @@ func Generate(ctx context.Context, e Env, dir, filename string, stderr io.Writer
 			pairs = append(pairs, outPair{
 				SQL: sql,
 				Gen: config.SQLGen{Go: sql.Gen.Go},
-			})
-		}
-		if sql.Gen.Kotlin != nil {
-			pairs = append(pairs, outPair{
-				SQL: sql,
-				Gen: config.SQLGen{Kotlin: sql.Gen.Kotlin},
-			})
-		}
-		if sql.Gen.Python != nil {
-			pairs = append(pairs, outPair{
-				SQL: sql,
-				Gen: config.SQLGen{Python: sql.Gen.Python},
 			})
 		}
 		if sql.Gen.JSON != nil {
@@ -168,97 +163,101 @@ func Generate(ctx context.Context, e Env, dir, filename string, stderr io.Writer
 		}
 	}
 
-	for _, sql := range pairs {
-		combo := config.Combine(*conf, sql.SQL)
-		if sql.Plugin != nil {
-			combo.Codegen = *sql.Plugin
-		}
+	var m sync.Mutex
+	grp, gctx := errgroup.WithContext(ctx)
+	grp.SetLimit(runtime.GOMAXPROCS(0))
 
-		// TODO: This feels like a hack that will bite us later
-		joined := make([]string, 0, len(sql.Schema))
-		for _, s := range sql.Schema {
-			joined = append(joined, filepath.Join(dir, s))
-		}
-		sql.Schema = joined
+	stderrs := make([]bytes.Buffer, len(pairs))
 
-		joined = make([]string, 0, len(sql.Queries))
-		for _, q := range sql.Queries {
-			joined = append(joined, filepath.Join(dir, q))
-		}
-		sql.Queries = joined
+	for i, pair := range pairs {
+		sql := pair
+		errout := &stderrs[i]
 
-		var name, lang string
-		parseOpts := opts.Parser{
-			Debug: debug.Debug,
-		}
-
-		switch {
-		case sql.Gen.Go != nil:
-			name = combo.Go.Package
-			lang = "golang"
-
-		case sql.Gen.Kotlin != nil:
-			lang = "kotlin"
-			name = combo.Kotlin.Package
-
-		case sql.Gen.Python != nil:
-			lang = "python"
-			name = combo.Python.Package
-
-		case sql.Plugin != nil:
-			lang = fmt.Sprintf("process:%s", sql.Plugin.Plugin)
-			name = sql.Plugin.Plugin
-		}
-
-		var packageRegion *trace.Region
-		if debug.Traced {
-			packageRegion = trace.StartRegion(ctx, "package")
-			trace.Logf(ctx, "", "name=%s dir=%s plugin=%s", name, dir, lang)
-		}
-
-		result, failed := parse(ctx, e, name, dir, sql.SQL, combo, parseOpts, stderr)
-		if failed {
-			if packageRegion != nil {
-				packageRegion.End()
+		grp.Go(func() error {
+			combo := config.Combine(*conf, sql.SQL)
+			if sql.Plugin != nil {
+				combo.Codegen = *sql.Plugin
 			}
-			errored = true
-			break
-		}
 
-		out, resp, err := codegen(ctx, combo, sql, result)
-		if err != nil {
-			fmt.Fprintf(stderr, "# package %s\n", name)
-			fmt.Fprintf(stderr, "error generating code: %s\n", err)
-			errored = true
-			if packageRegion != nil {
-				packageRegion.End()
+			// TODO: This feels like a hack that will bite us later
+			joined := make([]string, 0, len(sql.Schema))
+			for _, s := range sql.Schema {
+				joined = append(joined, filepath.Join(dir, s))
 			}
-			continue
-		}
+			sql.Schema = joined
 
-		files := map[string]string{}
-		for _, file := range resp.Files {
-			files[file.Name] = string(file.Contents)
-		}
-		for n, source := range files {
-			filename := filepath.Join(dir, out, n)
-			output[filename] = source
-		}
-		if packageRegion != nil {
+			joined = make([]string, 0, len(sql.Queries))
+			for _, q := range sql.Queries {
+				joined = append(joined, filepath.Join(dir, q))
+			}
+			sql.Queries = joined
+
+			var name, lang string
+			parseOpts := opts.Parser{
+				Debug: debug.Debug,
+			}
+
+			switch {
+			case sql.Gen.Go != nil:
+				name = combo.Go.Package
+				lang = "golang"
+
+			case sql.Plugin != nil:
+				lang = fmt.Sprintf("process:%s", sql.Plugin.Plugin)
+				name = sql.Plugin.Plugin
+			}
+
+			packageRegion := trace.StartRegion(gctx, "package")
+			trace.Logf(gctx, "", "name=%s dir=%s plugin=%s", name, dir, lang)
+
+			result, failed := parse(gctx, name, dir, sql.SQL, combo, parseOpts, errout)
+			if failed {
+				packageRegion.End()
+				errored = true
+				return nil
+			}
+
+			out, resp, err := codegen(gctx, combo, sql, result)
+			if err != nil {
+				fmt.Fprintf(errout, "# package %s\n", name)
+				fmt.Fprintf(errout, "error generating code: %s\n", err)
+				errored = true
+				packageRegion.End()
+				return nil
+			}
+
+			files := map[string]string{}
+			for _, file := range resp.Files {
+				files[file.Name] = string(file.Contents)
+			}
+
+			m.Lock()
+			for n, source := range files {
+				filename := filepath.Join(dir, out, n)
+				output[filename] = source
+			}
+			m.Unlock()
+
 			packageRegion.End()
-		}
+			return nil
+		})
 	}
-
+	if err := grp.Wait(); err != nil {
+		return nil, err
+	}
 	if errored {
+		for i, _ := range stderrs {
+			if _, err := io.Copy(stderr, &stderrs[i]); err != nil {
+				return nil, err
+			}
+		}
 		return nil, fmt.Errorf("errored")
 	}
 	return output, nil
 }
 
-func parse(ctx context.Context, e Env, name, dir string, sql config.SQL, combo config.CombinedSettings, parserOpts opts.Parser, stderr io.Writer) (*compiler.Result, bool) {
-	if debug.Traced {
-		defer trace.StartRegion(ctx, "parse").End()
-	}
+func parse(ctx context.Context, name, dir string, sql config.SQL, combo config.CombinedSettings, parserOpts opts.Parser, stderr io.Writer) (*compiler.Result, bool) {
+	defer trace.StartRegion(ctx, "parse").End()
 	c := compiler.NewCompiler(sql, combo)
 	if err := c.ParseCatalog(sql.Schema); err != nil {
 		fmt.Fprintf(stderr, "# package %s\n", name)
@@ -289,10 +288,7 @@ func parse(ctx context.Context, e Env, name, dir string, sql config.SQL, combo c
 }
 
 func codegen(ctx context.Context, combo config.CombinedSettings, sql outPair, result *compiler.Result) (string, *plugin.CodeGenResponse, error) {
-	var region *trace.Region
-	if debug.Traced {
-		region = trace.StartRegion(ctx, "codegen")
-	}
+	defer trace.StartRegion(ctx, "codegen").End()
 	req := codeGenRequest(result, combo)
 	var handler ext.Handler
 	var out string
@@ -300,14 +296,6 @@ func codegen(ctx context.Context, combo config.CombinedSettings, sql outPair, re
 	case sql.Gen.Go != nil:
 		out = combo.Go.Out
 		handler = ext.HandleFunc(golang.Generate)
-
-	case sql.Gen.Kotlin != nil:
-		out = combo.Kotlin.Out
-		handler = ext.HandleFunc(kotlin.Generate)
-
-	case sql.Gen.Python != nil:
-		out = combo.Python.Out
-		handler = ext.HandleFunc(python.Generate)
 
 	case sql.Gen.JSON != nil:
 		out = combo.JSON.Out
@@ -344,8 +332,5 @@ func codegen(ctx context.Context, combo config.CombinedSettings, sql outPair, re
 		return "", nil, fmt.Errorf("missing language backend")
 	}
 	resp, err := handler.Generate(ctx, req)
-	if region != nil {
-		region.End()
-	}
 	return out, resp, err
 }
