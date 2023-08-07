@@ -19,13 +19,13 @@ sudo snap install sqlc
 ### Go >= 1.17:
 
 ```
-go install github.com/kyleconroy/sqlc/cmd/sqlc@latest
+go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest
 ```
 
 ### Go < 1.17:
 
 ```
-go get github.com/kyleconroy/sqlc/cmd/sqlc
+go get github.com/sqlc-dev/sqlc/cmd/sqlc
 ```
 
 ## Docker
@@ -48,10 +48,10 @@ docker run --rm -v "%cd%:/src" -w /src kjconroy/sqlc generate
 
 ## Downloads
 
-Get pre-built binaries for *v1.17.2*:
+Get pre-built binaries for *v1.20.0*:
 
-- [Linux](https://github.com/kyleconroy/sqlc/releases/download/v1.17.2/sqlc_1.17.2_linux_amd64.tar.gz)
-- [macOS](https://github.com/kyleconroy/sqlc/releases/download/v1.17.2/sqlc_1.17.2_darwin_amd64.zip)
-- [Windows (MySQL only)](https://github.com/kyleconroy/sqlc/releases/download/v1.17.2/sqlc_1.17.2_windows_amd64.zip)
+- [Linux](https://downloads.sqlc.dev/sqlc_1.20.0_linux_amd64.tar.gz)
+- [macOS](https://downloads.sqlc.dev/sqlc_1.20.0_darwin_amd64.zip)
+- [Windows](https://downloads.sqlc.dev/sqlc_1.20.0_windows_amd64.zip)
 
 See [downloads.sqlc.dev](https://downloads.sqlc.dev/) for older versions.

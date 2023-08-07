@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	osexec "os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,7 +13,8 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 
-	"github.com/kyleconroy/sqlc/internal/cmd"
+	"github.com/sqlc-dev/sqlc/internal/cmd"
+	"github.com/sqlc-dev/sqlc/internal/opts"
 )
 
 func TestExamples(t *testing.T) {
@@ -38,7 +40,7 @@ func TestExamples(t *testing.T) {
 			t.Parallel()
 			path := filepath.Join(examples, tc)
 			var stderr bytes.Buffer
-			output, err := cmd.Generate(ctx, cmd.Env{ExperimentalFeatures: true}, path, "", &stderr)
+			output, err := cmd.Generate(ctx, cmd.Env{}, path, "", &stderr)
 			if err != nil {
 				t.Fatalf("sqlc generate failed: %s", stderr.String())
 			}
@@ -66,7 +68,7 @@ func BenchmarkExamples(b *testing.B) {
 			path := filepath.Join(examples, tc)
 			for i := 0; i < b.N; i++ {
 				var stderr bytes.Buffer
-				cmd.Generate(ctx, cmd.Env{ExperimentalFeatures: true}, path, "", &stderr)
+				cmd.Generate(ctx, cmd.Env{}, path, "", &stderr)
 			}
 		})
 	}
@@ -102,14 +104,27 @@ func TestReplay(t *testing.T) {
 			args := parseExec(t, path)
 			expected := expectedStderr(t, path)
 
+			if args.Process != "" {
+				_, err := osexec.LookPath(args.Process)
+				if err != nil {
+					t.Skipf("executable not found: %s %s", args.Process, err)
+				}
+			}
+
+			env := cmd.Env{
+				Debug:    opts.DebugFromString(args.Env["SQLCDEBUG"]),
+				NoRemote: true,
+			}
 			switch args.Command {
 			case "diff":
-				err = cmd.Diff(ctx, cmd.Env{ExperimentalFeatures: true}, path, "", &stderr)
+				err = cmd.Diff(ctx, env, path, "", &stderr)
 			case "generate":
-				output, err = cmd.Generate(ctx, cmd.Env{ExperimentalFeatures: true}, path, "", &stderr)
+				output, err = cmd.Generate(ctx, env, path, "", &stderr)
 				if err == nil {
 					cmpDirectory(t, path, output)
 				}
+			case "vet":
+				err = cmd.Vet(ctx, env, path, "", &stderr)
 			default:
 				t.Fatalf("unknown command")
 			}
@@ -142,6 +157,9 @@ func cmpDirectory(t *testing.T, dir string, actual map[string]string) {
 			return nil
 		}
 		if filepath.Base(path) == "sqlc.json" {
+			return nil
+		}
+		if filepath.Base(path) == "exec.json" {
 			return nil
 		}
 		if strings.Contains(path, "/kotlin/build") {
@@ -198,7 +216,9 @@ func expectedStderr(t *testing.T, dir string) string {
 }
 
 type exec struct {
-	Command string `json:"command"`
+	Command string            `json:"command"`
+	Process string            `json:"process"`
+	Env     map[string]string `json:"env"`
 }
 
 func parseExec(t *testing.T, dir string) exec {
@@ -242,7 +262,7 @@ func BenchmarkReplay(b *testing.B) {
 			path, _ := filepath.Abs(tc)
 			for i := 0; i < b.N; i++ {
 				var stderr bytes.Buffer
-				cmd.Generate(ctx, cmd.Env{ExperimentalFeatures: true}, path, "", &stderr)
+				cmd.Generate(ctx, cmd.Env{}, path, "", &stderr)
 			}
 		})
 	}

@@ -48,8 +48,8 @@ const catalogTmpl = `
 package {{.Pkg}}
 
 import (
-	"github.com/kyleconroy/sqlc/internal/sql/ast"
-	"github.com/kyleconroy/sqlc/internal/sql/catalog"
+	"github.com/sqlc-dev/sqlc/internal/sql/ast"
+	"github.com/sqlc-dev/sqlc/internal/sql/catalog"
 )
 
 var funcs{{.GenFnName}} = []*catalog.Function {
@@ -119,8 +119,8 @@ const loaderFuncTmpl = `
 package postgresql
 
 import (
-	"github.com/kyleconroy/sqlc/internal/engine/postgresql/contrib"
-	"github.com/kyleconroy/sqlc/internal/sql/catalog"
+	"github.com/sqlc-dev/sqlc/internal/engine/postgresql/contrib"
+	"github.com/sqlc-dev/sqlc/internal/sql/catalog"
 )
 
 func loadExtension(name string) *catalog.Schema {
@@ -156,7 +156,7 @@ func clean(arg string) string {
 	return arg
 }
 
-// writeFormattedGo executes `tmpl` with `data` as its context to the the file `destPath`
+// writeFormattedGo executes `tmpl` with `data` as its context to the file `destPath`
 func writeFormattedGo(tmpl *template.Template, data any, destPath string) error {
 	out := bytes.NewBuffer([]byte{})
 	err := tmpl.Execute(out, data)

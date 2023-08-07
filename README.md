@@ -1,7 +1,7 @@
 # sqlc: A SQL Compiler
 
-![go](https://github.com/kyleconroy/sqlc/workflows/go/badge.svg)
-[![Go Report Card](https://goreportcard.com/badge/github.com/kyleconroy/sqlc)](https://goreportcard.com/report/github.com/kyleconroy/sqlc)
+![go](https://github.com/sqlc-dev/sqlc/workflows/go/badge.svg)
+[![Go Report Card](https://goreportcard.com/badge/github.com/sqlc-dev/sqlc)](https://goreportcard.com/report/github.com/sqlc-dev/sqlc)
 
 sqlc generates **type-safe code** from SQL. Here's how it works:
 
@@ -9,7 +9,7 @@ sqlc generates **type-safe code** from SQL. Here's how it works:
 1. You run sqlc to generate code with type-safe interfaces to those queries.
 1. You write application code that calls the generated code.
 
-Check out [an interactive example](https://play.sqlc.dev/) to see it in action.
+Check out [an interactive example](https://play.sqlc.dev/) to see it in action, and the [introductory blog post](https://conroy.org/introducing-sqlc) for the motivation behind sqlc.
 
 ## Streaming support
 

@@ -54,6 +54,8 @@ code ever again.
    howto/ddl.md
    howto/structs.md
 
+   howto/vet.md
+   howto/ci-cd.md
    howto/upload.md
 
 .. toctree::
@@ -74,6 +76,7 @@ code ever again.
    :caption: Conceptual Guides
    :hidden:
 
+   guides/using-go-and-pgx.rst
    guides/development.md
    guides/plugins.md
    guides/privacy.md
