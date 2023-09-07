@@ -138,6 +138,8 @@ The `gen` mapping supports the following keys:
   - If true, parameters are passed as pointers to structs. Defaults to `false`.
 - `emit_methods_with_db_argument`:
   - If true, generated methods will accept a DBTX argument instead of storing a DBTX on the `*Queries` struct. Defaults to `false`.
+- `emit_pointers_for_null_types`:
+  - If true and `sql_package` is set to `pgx/v4` or `pgx/v5`, generated types for nullable columns are emitted as pointers (ie. `*string`) instead of `database/sql` null types (ie. `NullString`). Defaults to `false`.
 - `emit_enum_valid_method`:
   - If true, generate a Valid method on enum types,
     indicating whether a string is a valid enum value.
@@ -316,6 +318,8 @@ Each mapping in the `plugins` collection has the following keys:
 
 - `name`:
   - The name of this plugin. Required
+- `env`
+  - A list of environment variables to pass to the plugin. By default, no environment variables are passed.
 - `process`: A mapping with a single `cmd` key
   - `cmd`:
     - The executable to call when using this plugin
@@ -326,13 +330,15 @@ Each mapping in the `plugins` collection has the following keys:
     - The SHA256 checksum for the downloaded file.
    
 ```yaml
-version: 2
+version: "2"
 plugins:
 - name: "py"
   wasm: 
     url: "https://github.com/sqlc-dev/sqlc-gen-python/releases/download/v0.16.0-alpha/sqlc-gen-python.wasm"
     sha256: "428476c7408fd4c032da4ec74e8a7344f4fa75e0f98a5a3302f238283b9b95f2"
 - name: "js"
+  env:
+  - PATH
   process: 
     cmd: "sqlc-gen-json"
 ```
@@ -352,7 +358,7 @@ See the [vet](../howto/vet.md) documentation for a list of built-in rules and
 help writing custom rules.
    
 ```yaml
-version: 2
+version: "2"
 sql:
   - schema: "query.sql"
     queries: "query.sql"
@@ -419,7 +425,7 @@ sql:
   gen:
     go:
       package: "authors"
-      out: "mysql
+      out: "mysql"
 ```
 
 With the previous configuration, whenever a struct field is generated from a

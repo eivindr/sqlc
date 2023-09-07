@@ -29,10 +29,14 @@ func todo(funcname string, n node) *ast.TODO {
 }
 
 func identifier(id string) string {
+	if len(id) >= 2 && id[0] == '"' && id[len(id)-1] == '"' {
+		unquoted, _ := strconv.Unquote(id)
+		return unquoted
+	}
 	return strings.ToLower(id)
 }
 
-func NewIdentifer(t string) *ast.String {
+func NewIdentifier(t string) *ast.String {
 	return &ast.String{Str: identifier(t)}
 }
 
@@ -293,7 +297,7 @@ func (c *cc) convertFuncContext(n *parser.Expr_functionContext) ast.Node {
 				},
 				Funcname: &ast.List{
 					Items: []ast.Node{
-						NewIdentifer(funcName),
+						NewIdentifier(funcName),
 					},
 				},
 				AggStar:     n.STAR() != nil,
@@ -317,16 +321,16 @@ func (c *cc) convertColumnNameExpr(n *parser.Expr_qualified_column_nameContext) 
 	if schema, ok := n.Schema_name().(*parser.Schema_nameContext); ok {
 		schemaText := schema.GetText()
 		if schemaText != "" {
-			items = append(items, NewIdentifer(schemaText))
+			items = append(items, NewIdentifier(schemaText))
 		}
 	}
 	if table, ok := n.Table_name().(*parser.Table_nameContext); ok {
 		tableName := table.GetText()
 		if tableName != "" {
-			items = append(items, NewIdentifer(tableName))
+			items = append(items, NewIdentifier(tableName))
 		}
 	}
-	items = append(items, NewIdentifer(n.Column_name().GetText()))
+	items = append(items, NewIdentifier(n.Column_name().GetText()))
 	return &ast.ColumnRef{
 		Fields: &ast.List{
 			Items: items,
@@ -371,22 +375,16 @@ func (c *cc) convertComparison(n *parser.Expr_comparisonContext) ast.Node {
 }
 
 func (c *cc) convertMultiSelect_stmtContext(n *parser.Select_stmtContext) ast.Node {
-	var tables []ast.Node
-	var cols []ast.Node
-	var where ast.Node
-	var groups = []ast.Node{}
-	var having ast.Node
-	var ctes []ast.Node
-
+	var ctes ast.List
 	if ct := n.Common_table_stmt(); ct != nil {
 		recursive := ct.RECURSIVE_() != nil
 		for _, cte := range ct.AllCommon_table_expression() {
 			tableName := identifier(cte.Table_name().GetText())
 			var cteCols ast.List
 			for _, col := range cte.AllColumn_name() {
-				cteCols.Items = append(cteCols.Items, NewIdentifer(col.GetText()))
+				cteCols.Items = append(cteCols.Items, NewIdentifier(col.GetText()))
 			}
-			ctes = append(ctes, &ast.CommonTableExpr{
+			ctes.Items = append(ctes.Items, &ast.CommonTableExpr{
 				Ctename:      &tableName,
 				Ctequery:     c.convert(cte.Select_stmt()),
 				Location:     cte.GetStart().GetStart(),
@@ -396,20 +394,24 @@ func (c *cc) convertMultiSelect_stmtContext(n *parser.Select_stmtContext) ast.No
 		}
 	}
 
-	for _, icore := range n.AllSelect_core() {
+	var selectStmt *ast.SelectStmt
+	for s, icore := range n.AllSelect_core() {
 		core, ok := icore.(*parser.Select_coreContext)
 		if !ok {
 			continue
 		}
-		cols = append(cols, c.getCols(core)...)
-		tables = append(tables, c.getTables(core)...)
+		cols := c.getCols(core)
+		tables := c.getTables(core)
 
+		var where ast.Node
 		i := 0
 		if core.WHERE_() != nil {
 			where = c.convert(core.Expr(i))
 			i++
 		}
 
+		var groups ast.List
+		var having ast.Node
 		if core.GROUP_() != nil {
 			l := len(core.AllExpr()) - i
 			if core.HAVING_() != nil {
@@ -418,33 +420,103 @@ func (c *cc) convertMultiSelect_stmtContext(n *parser.Select_stmtContext) ast.No
 			}
 
 			for i < l {
-				groups = append(groups, c.convert(core.Expr(i)))
+				groups.Items = append(groups.Items, c.convert(core.Expr(i)))
 				i++
+			}
+		}
+		var window ast.List
+		if core.WINDOW_() != nil {
+			for w, windowNameCtx := range core.AllWindow_name() {
+				windowName := identifier(windowNameCtx.GetText())
+				windowDef := core.Window_defn(w)
+
+				_ = windowDef.Base_window_name()
+				var partitionBy ast.List
+				if windowDef.PARTITION_() != nil {
+					for _, e := range windowDef.AllExpr() {
+						partitionBy.Items = append(partitionBy.Items, c.convert(e))
+					}
+				}
+				var orderBy ast.List
+				if windowDef.ORDER_() != nil {
+					for _, e := range windowDef.AllOrdering_term() {
+						oterm := e.(*parser.Ordering_termContext)
+						sortByDir := ast.SortByDirDefault
+						if ad := oterm.Asc_desc(); ad != nil {
+							if ad.ASC_() != nil {
+								sortByDir = ast.SortByDirAsc
+							} else {
+								sortByDir = ast.SortByDirDesc
+							}
+						}
+						sortByNulls := ast.SortByNullsDefault
+						if oterm.NULLS_() != nil {
+							if oterm.FIRST_() != nil {
+								sortByNulls = ast.SortByNullsFirst
+							} else {
+								sortByNulls = ast.SortByNullsLast
+							}
+						}
+
+						orderBy.Items = append(orderBy.Items, &ast.SortBy{
+							Node:        c.convert(oterm.Expr()),
+							SortbyDir:   sortByDir,
+							SortbyNulls: sortByNulls,
+							UseOp:       &ast.List{},
+						})
+					}
+				}
+				window.Items = append(window.Items, &ast.WindowDef{
+					Name:            &windowName,
+					PartitionClause: &partitionBy,
+					OrderClause:     &orderBy,
+					FrameOptions:    0, // todo
+					StartOffset:     &ast.TODO{},
+					EndOffset:       &ast.TODO{},
+					Location:        windowNameCtx.GetStart().GetStart(),
+				})
+			}
+		}
+		sel := &ast.SelectStmt{
+			FromClause:   &ast.List{Items: tables},
+			TargetList:   &ast.List{Items: cols},
+			WhereClause:  where,
+			GroupClause:  &groups,
+			HavingClause: having,
+			WindowClause: &window,
+			ValuesLists:  &ast.List{},
+		}
+		if selectStmt == nil {
+			selectStmt = sel
+		} else {
+			co := n.Compound_operator(s - 1)
+			so := ast.None
+			all := false
+			switch {
+			case co.UNION_() != nil:
+				so = ast.Union
+				all = co.ALL_() != nil
+			case co.INTERSECT_() != nil:
+				so = ast.Intersect
+			case co.EXCEPT_() != nil:
+				so = ast.Except
+			}
+			selectStmt = &ast.SelectStmt{
+				TargetList: &ast.List{},
+				FromClause: &ast.List{},
+				Op:         so,
+				All:        all,
+				Larg:       selectStmt,
+				Rarg:       sel,
 			}
 		}
 	}
 
-	window := &ast.List{Items: []ast.Node{}}
-	if n.Order_by_stmt() != nil {
-		window.Items = append(window.Items, c.convert(n.Order_by_stmt()))
-	}
-
 	limitCount, limitOffset := c.convertLimit_stmtContext(n.Limit_stmt())
-
-	return &ast.SelectStmt{
-		FromClause:   &ast.List{Items: tables},
-		TargetList:   &ast.List{Items: cols},
-		WhereClause:  where,
-		GroupClause:  &ast.List{Items: groups},
-		HavingClause: having,
-		WindowClause: window,
-		LimitCount:   limitCount,
-		LimitOffset:  limitOffset,
-		ValuesLists:  &ast.List{},
-		WithClause: &ast.WithClause{
-			Ctes: &ast.List{Items: ctes},
-		},
-	}
+	selectStmt.LimitCount = limitCount
+	selectStmt.LimitOffset = limitOffset
+	selectStmt.WithClause = &ast.WithClause{Ctes: &ctes}
+	return selectStmt
 }
 
 func (c *cc) convertExprListContext(n *parser.Expr_listContext) ast.Node {
@@ -456,17 +528,46 @@ func (c *cc) convertExprListContext(n *parser.Expr_listContext) ast.Node {
 }
 
 func (c *cc) getTables(core *parser.Select_coreContext) []ast.Node {
-	var tables []ast.Node
-	tables = append(tables, c.convertTablesOrSubquery(core.AllTable_or_subquery())...)
-
 	if core.Join_clause() != nil {
-		join, ok := core.Join_clause().(*parser.Join_clauseContext)
-		if ok {
-			tables = append(tables, c.convertTablesOrSubquery(join.AllTable_or_subquery())...)
+		join := core.Join_clause().(*parser.Join_clauseContext)
+		tables := c.convertTablesOrSubquery(join.AllTable_or_subquery())
+		table := tables[0]
+		for i, t := range tables[1:] {
+			joinExpr := &ast.JoinExpr{
+				Larg: table,
+				Rarg: t,
+			}
+			jo := join.Join_operator(i)
+			if jo.NATURAL_() != nil {
+				joinExpr.IsNatural = true
+			}
+			switch {
+			case jo.CROSS_() != nil || jo.INNER_() != nil:
+				joinExpr.Jointype = ast.JoinTypeInner
+			case jo.LEFT_() != nil:
+				joinExpr.Jointype = ast.JoinTypeLeft
+			case jo.RIGHT_() != nil:
+				joinExpr.Jointype = ast.JoinTypeRight
+			case jo.FULL_() != nil:
+				joinExpr.Jointype = ast.JoinTypeFull
+			}
+			jc := join.Join_constraint(i)
+			switch {
+			case jc.ON_() != nil:
+				joinExpr.Quals = c.convert(jc.Expr())
+			case jc.USING_() != nil:
+				var using ast.List
+				for _, cn := range jc.AllColumn_name() {
+					using.Items = append(using.Items, NewIdentifier(cn.GetText()))
+				}
+				joinExpr.UsingClause = &using
+			}
+			table = joinExpr
 		}
+		return []ast.Node{table}
+	} else {
+		return c.convertTablesOrSubquery(core.AllTable_or_subquery())
 	}
-
-	return tables
 }
 
 func (c *cc) getCols(core *parser.Select_coreContext) []ast.Node {
@@ -492,7 +593,7 @@ func (c *cc) getCols(core *parser.Select_coreContext) []ast.Node {
 			continue
 		}
 
-		if col.AS_() != nil {
+		if col.Column_alias() != nil {
 			name := identifier(col.Column_alias().GetText())
 			target.Name = &name
 		}
@@ -506,7 +607,7 @@ func (c *cc) getCols(core *parser.Select_coreContext) []ast.Node {
 func (c *cc) convertWildCardField(n *parser.Result_columnContext) *ast.ColumnRef {
 	items := []ast.Node{}
 	if n.Table_name() != nil {
-		items = append(items, NewIdentifer(n.Table_name().GetText()))
+		items = append(items, NewIdentifier(n.Table_name().GetText()))
 	}
 	items = append(items, &ast.A_Star{})
 
@@ -763,7 +864,7 @@ func (c *cc) convertInsert_stmtContext(n *parser.Insert_stmtContext) ast.Node {
 		rel.Schemaname = &schemaName
 	}
 	if n.Table_alias() != nil {
-		tableAlias := n.Table_alias().GetText()
+		tableAlias := identifier(n.Table_alias().GetText())
 		rel.Alias = &ast.Alias{
 			Aliasname: &tableAlias,
 		}
@@ -833,7 +934,7 @@ func (c *cc) convertTablesOrSubquery(n []parser.ITable_or_subqueryContext) []ast
 				rv.Schemaname = &schema
 			}
 			if from.Table_alias() != nil {
-				alias := from.Table_alias().GetText()
+				alias := identifier(from.Table_alias().GetText())
 				rv.Alias = &ast.Alias{Aliasname: &alias}
 			}
 			if from.Table_alias_fallback() != nil {
@@ -853,7 +954,7 @@ func (c *cc) convertTablesOrSubquery(n []parser.ITable_or_subqueryContext) []ast
 							},
 							Funcname: &ast.List{
 								Items: []ast.Node{
-									NewIdentifer(rel),
+									NewIdentifier(rel),
 								},
 							},
 							Args: &ast.List{
@@ -866,7 +967,7 @@ func (c *cc) convertTablesOrSubquery(n []parser.ITable_or_subqueryContext) []ast
 			}
 
 			if from.Table_alias() != nil {
-				alias := from.Table_alias().GetText()
+				alias := identifier(from.Table_alias().GetText())
 				rf.Alias = &ast.Alias{Aliasname: &alias}
 			}
 
@@ -877,7 +978,7 @@ func (c *cc) convertTablesOrSubquery(n []parser.ITable_or_subqueryContext) []ast
 			}
 
 			if from.Table_alias() != nil {
-				alias := from.Table_alias().GetText()
+				alias := identifier(from.Table_alias().GetText())
 				rs.Alias = &ast.Alias{Aliasname: &alias}
 			}
 
@@ -965,10 +1066,18 @@ func (c *cc) convertCastExpr(n *parser.Expr_castContext) ast.Node {
 		TypeName: &ast.TypeName{
 			Name: name,
 			Names: &ast.List{Items: []ast.Node{
-				NewIdentifer(name),
+				NewIdentifier(name),
 			}},
 			ArrayBounds: &ast.List{},
 		},
+		Location: n.GetStart().GetStart(),
+	}
+}
+
+func (c *cc) convertCollateExpr(n *parser.Expr_collateContext) ast.Node {
+	return &ast.CollateExpr{
+		Xpr:      c.convert(n.Expr()),
+		Arg:      NewIdentifier(n.Collation_name().GetText()),
 		Location: n.GetStart().GetStart(),
 	}
 }
@@ -1032,6 +1141,9 @@ func (c *cc) convert(node node) ast.Node {
 
 	case *parser.Expr_betweenContext:
 		return c.convertBetweenExpr(n)
+
+	case *parser.Expr_collateContext:
+		return c.convertCollateExpr(n)
 
 	case *parser.Factored_select_stmtContext:
 		// TODO: need to handle this

@@ -21,9 +21,9 @@ type ImportSpec struct {
 
 func (s ImportSpec) String() string {
 	if s.ID != "" {
-		return fmt.Sprintf("%s \"%s\"", s.ID, s.Path)
+		return fmt.Sprintf("%s %q", s.ID, s.Path)
 	} else {
-		return fmt.Sprintf("\"%s\"", s.Path)
+		return fmt.Sprintf("%q", s.Path)
 	}
 }
 
@@ -243,8 +243,10 @@ func (i *importer) interfaceImports() fileImports {
 				}
 			}
 			if !q.Arg.isEmpty() {
-				if hasPrefixIgnoringSliceAndPointerPrefix(q.Arg.Type(), name) {
-					return true
+				for _, f := range q.Arg.Fields() {
+					if hasPrefixIgnoringSliceAndPointerPrefix(f.Type, name) {
+						return true
+					}
 				}
 			}
 		}
@@ -311,15 +313,10 @@ func (i *importer) queryImports(filename string) fileImports {
 				}
 			}
 			if !q.Arg.isEmpty() {
-				if q.Arg.EmitStruct() {
-					for _, f := range q.Arg.Struct.Fields {
-						if hasPrefixIgnoringSliceAndPointerPrefix(f.Type, name) {
-							return true
-						}
+				for _, f := range q.Arg.Fields() {
+					if hasPrefixIgnoringSliceAndPointerPrefix(f.Type, name) {
+						return true
 					}
-				}
-				if hasPrefixIgnoringSliceAndPointerPrefix(q.Arg.Type(), name) {
-					return true
 				}
 			}
 		}

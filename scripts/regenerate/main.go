@@ -55,7 +55,8 @@ func regenerate(dir string) error {
 				expectFailure = true
 			}
 
-			cmd := exec.Command("sqlc-dev", "generate", "--experimental")
+			cmd := exec.Command("sqlc-dev", "generate")
+			cmd.Env = append(cmd.Env, "SQLC_DUMMY_VALUE=true")
 			cmd.Dir = cwd
 			out, failed := cmd.CombinedOutput()
 			if failed != nil && !expectFailure {

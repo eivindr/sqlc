@@ -57,6 +57,7 @@ func (table *Table) addColumn(cmd *ast.AlterTableCmd) error {
 		IsNotNull:  cmd.Def.IsNotNull,
 		IsUnsigned: cmd.Def.IsUnsigned,
 		IsArray:    cmd.Def.IsArray,
+		ArrayDims:  cmd.Def.ArrayDims,
 		Length:     cmd.Def.Length,
 	})
 	return nil
@@ -267,7 +268,7 @@ func (c *Catalog) createTable(stmt *ast.CreateTableStmt) error {
 				seen[col.Name] = notNull || col.IsNotNull
 				if a, ok := coltype[col.Name]; ok {
 					if !sameType(&a, &col.Type) {
-						return fmt.Errorf("column \"%s\" has a type conflict", col.Name)
+						return fmt.Errorf("column %q has a type conflict", col.Name)
 					}
 				}
 				continue
@@ -298,7 +299,7 @@ func (c *Catalog) createTable(stmt *ast.CreateTableStmt) error {
 				seen[col.Colname] = notNull || col.IsNotNull
 				if a, ok := coltype[col.Colname]; ok {
 					if !sameType(&a, col.TypeName) {
-						return fmt.Errorf("column \"%s\" has a type conflict", col.Colname)
+						return fmt.Errorf("column %q has a type conflict", col.Colname)
 					}
 				}
 				continue
