@@ -54,8 +54,11 @@ code ever again.
    howto/ddl.md
    howto/structs.md
    howto/embedding.md
+   howto/overrides.md
+   howto/rename.md
 
    howto/vet.md
+   howto/managed-databases.md
    howto/ci-cd.md
    howto/upload.md
 
