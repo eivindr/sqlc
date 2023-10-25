@@ -1,4 +1,8 @@
-# Uploading projects
+# `upload` - Uploading projects
+
+```{note}
+Project uploads are powered by [sqlc Cloud](https://dashboard.sqlc.dev). Sign up for [free](https://dashboard.sqlc.dev) today.
+```
 
 *Added in v1.22.0*
 
@@ -7,9 +11,6 @@ break your code. Similar to Rust's [crater](https://github.com/rust-lang/crater)
 project, uploaded archives are tested against development releases of sqlc to
 verify correctness.
 
-Interested in uploading projects? Sign up [here](https://docs.google.com/forms/d/e/1FAIpQLSdxoMzJ7rKkBpuez-KyBcPNyckYV-5iMR--FRB7WnhvAmEvKg/viewform) or send us an email
-at [hello@sqlc.dev](mailto:hello@sqlc.dev).
-
 ## Add configuration
 
 After creating a project, add the project ID to your sqlc configuration file.
@@ -17,7 +18,7 @@ After creating a project, add the project ID to your sqlc configuration file.
 ```yaml
 version: "2"
 cloud:
-  project: "<PROJECT-ID>"
+  project: "<PROJECT_ID>"
 ```
 
 You'll also need to create an auth token and make it available via the

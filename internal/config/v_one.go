@@ -21,6 +21,7 @@ type v1PackageSettings struct {
 	Name                      string     `json:"name" yaml:"name"`
 	Engine                    Engine     `json:"engine,omitempty" yaml:"engine"`
 	Database                  *Database  `json:"database,omitempty" yaml:"database"`
+	Analyzer                  Analyzer   `json:"analyzer" yaml:"analyzer"`
 	Path                      string     `json:"path" yaml:"path"`
 	Schema                    Paths      `json:"schema" yaml:"schema"`
 	Queries                   Paths      `json:"queries" yaml:"queries"`
@@ -53,6 +54,7 @@ type v1PackageSettings struct {
 	QueryParameterLimit       *int32     `json:"query_parameter_limit,omitempty" yaml:"query_parameter_limit"`
 	OmitUnusedStructs         bool       `json:"omit_unused_structs,omitempty" yaml:"omit_unused_structs"`
 	Rules                     []string   `json:"rules" yaml:"rules"`
+	BuildTags                 string     `json:"build_tags,omitempty" yaml:"build_tags"`
 }
 
 func v1ParseConfig(rd io.Reader) (Config, error) {
@@ -141,11 +143,13 @@ func (c *V1GenerateSettings) Translate() Config {
 			pkg.StrictOrderBy = &defaultValue
 		}
 		conf.SQL = append(conf.SQL, SQL{
+			Name:     pkg.Name,
 			Engine:   pkg.Engine,
 			Database: pkg.Database,
 			Schema:   pkg.Schema,
 			Queries:  pkg.Queries,
 			Rules:    pkg.Rules,
+			Analyzer: pkg.Analyzer,
 			Gen: SQLGen{
 				Go: &SQLGo{
 					EmitInterface:             pkg.EmitInterface,
@@ -176,6 +180,7 @@ func (c *V1GenerateSettings) Translate() Config {
 					OutputFilesSuffix:         pkg.OutputFilesSuffix,
 					QueryParameterLimit:       pkg.QueryParameterLimit,
 					OmitUnusedStructs:         pkg.OmitUnusedStructs,
+					BuildTags:                 pkg.BuildTags,
 				},
 			},
 			StrictFunctionChecks: pkg.StrictFunctionChecks,

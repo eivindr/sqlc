@@ -33,11 +33,11 @@ func parseIdentifierString(name string) (*plugin.Identifier, error) {
 	}
 }
 
-func postgresType(req *plugin.CodeGenRequest, col *plugin.Column) string {
+func postgresType(req *plugin.CodeGenRequest, options *opts, col *plugin.Column) string {
 	columnType := sdk.DataType(col.Type)
 	notNull := col.NotNull || col.IsArray
-	driver := parseDriver(req.Settings.Go.SqlPackage)
-	emitPointersForNull := driver.IsPGX() && req.Settings.Go.EmitPointersForNullTypes
+	driver := parseDriver(options.SqlPackage)
+	emitPointersForNull := driver.IsPGX() && options.EmitPointersForNullTypes
 
 	switch columnType {
 	case "serial", "serial4", "pg_catalog.serial4":
@@ -535,6 +535,15 @@ func postgresType(req *plugin.CodeGenRequest, col *plugin.Column) string {
 	case "polygon":
 		if driver.IsPGX() {
 			return "pgtype.Polygon"
+		}
+
+	case "vector":
+		if driver == SQLDriverPGXV5 {
+			if emitPointersForNull {
+				return "*pgvector.Vector"
+			} else {
+				return "pgvector.Vector"
+			}
 		}
 
 	case "void":

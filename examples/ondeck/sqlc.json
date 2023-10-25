@@ -10,8 +10,12 @@
       "schema": "postgresql/schema",
       "queries": "postgresql/query",
       "engine": "postgresql",
+      "sql_package": "database/sql",
       "database": {
         "managed": true
+      },
+      "analyzer": {
+        "database": false
       },
       "rules": [
         "sqlc/db-prepare"
@@ -21,7 +25,7 @@
       "emit_interface": true
     },
     {
-      "path": "mysql",
+    "path": "mysql",
       "name": "ondeck",
       "schema": "mysql/schema",
       "queries": "mysql/query",

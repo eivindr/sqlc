@@ -2,6 +2,7 @@ package compiler
 
 import (
 	"fmt"
+	"log/slog"
 	"strconv"
 
 	"github.com/sqlc-dev/sqlc/internal/sql/ast"
@@ -62,7 +63,10 @@ func (comp *Compiler) resolveCatalogRefs(qc *QueryCatalog, rvs []*ast.RangeVar, 
 		}
 		table, err := c.GetTable(fqn)
 		if err != nil {
-			// If the table name doesn't exist, fisrt check if it's a CTE
+			if qc == nil {
+				continue
+			}
+			// If the table name doesn't exist, first check if it's a CTE
 			if _, qcerr := qc.GetTable(fqn); qcerr != nil {
 				return nil, err
 			}
@@ -580,8 +584,6 @@ func (comp *Compiler) resolveCatalogRefs(qc *QueryCatalog, rvs []*ast.RangeVar, 
 						})
 					}
 				}
-			} else {
-				fmt.Println("------------------------")
 			}
 
 			if found == 0 {
@@ -600,7 +602,17 @@ func (comp *Compiler) resolveCatalogRefs(qc *QueryCatalog, rvs []*ast.RangeVar, 
 			}
 
 		default:
-			fmt.Printf("unsupported reference type: %T\n", n)
+			slog.Debug("unsupported reference type", "type", fmt.Sprintf("%T", n))
+			defaultP := named.NewInferredParam(ref.name, false)
+			p, isNamed := params.FetchMerge(ref.ref.Number, defaultP)
+			a = append(a, Parameter{
+				Number: ref.ref.Number,
+				Column: &Column{
+					Name:         p.Name(),
+					DataType:     "any",
+					IsNamedParam: isNamed,
+				},
+			})
 		}
 	}
 	return a, nil

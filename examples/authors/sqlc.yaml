@@ -7,12 +7,15 @@ sql:
   engine: postgresql
   database:
     managed: true
+  analyzer:
+    database: false
   rules:
   - sqlc/db-prepare
   - postgresql-query-too-costly
   gen:
     go:
       package: authors
+      sql_package: pgx/v5
       out: postgresql
 - schema: mysql/schema.sql
   queries: mysql/query.sql

@@ -25,6 +25,7 @@ import (
 )
 
 func init() {
+	createDBCmd.Flags().StringP("queryset", "", "", "name of the queryset to use")
 	uploadCmd.Flags().BoolP("dry-run", "", false, "dump upload request (default: false)")
 	initCmd.Flags().BoolP("v1", "", false, "generate v1 config yaml file")
 	initCmd.Flags().BoolP("v2", "", true, "generate v2 config yaml file")
@@ -38,9 +39,9 @@ func Do(args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer) int 
 	rootCmd.PersistentFlags().BoolP("experimental", "x", false, "DEPRECATED: enable experimental features (default: false)")
 	rootCmd.PersistentFlags().Bool("no-remote", false, "disable remote execution (default: false)")
 	rootCmd.PersistentFlags().Bool("remote", false, "enable remote execution (default: false)")
-	rootCmd.PersistentFlags().Bool("no-database", false, "disable database connections (default: false)")
 
 	rootCmd.AddCommand(checkCmd)
+	rootCmd.AddCommand(createDBCmd)
 	rootCmd.AddCommand(diffCmd)
 	rootCmd.AddCommand(genCmd)
 	rootCmd.AddCommand(initCmd)
@@ -135,24 +136,21 @@ var initCmd = &cobra.Command{
 }
 
 type Env struct {
-	DryRun     bool
-	Debug      opts.Debug
-	Remote     bool
-	NoRemote   bool
-	NoDatabase bool
+	DryRun   bool
+	Debug    opts.Debug
+	Remote   bool
+	NoRemote bool
 }
 
 func ParseEnv(c *cobra.Command) Env {
 	dr := c.Flag("dry-run")
 	r := c.Flag("remote")
 	nr := c.Flag("no-remote")
-	nodb := c.Flag("no-database")
 	return Env{
-		DryRun:     dr != nil && dr.Changed,
-		Debug:      opts.DebugFromEnv(),
-		Remote:     r != nil && nr.Value.String() == "true",
-		NoRemote:   nr != nil && nr.Value.String() == "true",
-		NoDatabase: nodb != nil && nodb.Value.String() == "true",
+		DryRun:   dr != nil && dr.Changed,
+		Debug:    opts.DebugFromEnv(),
+		Remote:   r != nil && nr.Value.String() == "true",
+		NoRemote: nr != nil && nr.Value.String() == "true",
 	}
 }
 
@@ -197,7 +195,10 @@ var genCmd = &cobra.Command{
 		defer trace.StartRegion(cmd.Context(), "generate").End()
 		stderr := cmd.ErrOrStderr()
 		dir, name := getConfigPath(stderr, cmd.Flag("file"))
-		output, err := Generate(cmd.Context(), ParseEnv(cmd), dir, name, stderr)
+		output, err := Generate(cmd.Context(), dir, name, &Options{
+			Env:    ParseEnv(cmd),
+			Stderr: stderr,
+		})
 		if err != nil {
 			os.Exit(1)
 		}
@@ -219,7 +220,11 @@ var uploadCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		stderr := cmd.ErrOrStderr()
 		dir, name := getConfigPath(stderr, cmd.Flag("file"))
-		if err := createPkg(cmd.Context(), ParseEnv(cmd), dir, name, stderr); err != nil {
+		opts := &Options{
+			Env:    ParseEnv(cmd),
+			Stderr: stderr,
+		}
+		if err := createPkg(cmd.Context(), dir, name, opts); err != nil {
 			fmt.Fprintf(stderr, "error uploading: %s\n", err)
 			os.Exit(1)
 		}
@@ -234,7 +239,11 @@ var checkCmd = &cobra.Command{
 		defer trace.StartRegion(cmd.Context(), "compile").End()
 		stderr := cmd.ErrOrStderr()
 		dir, name := getConfigPath(stderr, cmd.Flag("file"))
-		if _, err := Generate(cmd.Context(), ParseEnv(cmd), dir, name, stderr); err != nil {
+		_, err := Generate(cmd.Context(), dir, name, &Options{
+			Env:    ParseEnv(cmd),
+			Stderr: stderr,
+		})
+		if err != nil {
 			os.Exit(1)
 		}
 		return nil
@@ -277,7 +286,11 @@ var diffCmd = &cobra.Command{
 		defer trace.StartRegion(cmd.Context(), "diff").End()
 		stderr := cmd.ErrOrStderr()
 		dir, name := getConfigPath(stderr, cmd.Flag("file"))
-		if err := Diff(cmd.Context(), ParseEnv(cmd), dir, name, stderr); err != nil {
+		opts := &Options{
+			Env:    ParseEnv(cmd),
+			Stderr: stderr,
+		}
+		if err := Diff(cmd.Context(), dir, name, opts); err != nil {
 			os.Exit(1)
 		}
 		return nil

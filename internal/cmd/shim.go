@@ -57,60 +57,48 @@ func pluginSettings(r *compiler.Result, cs config.CombinedSettings) *plugin.Sett
 		Queries:   []string(cs.Package.Queries),
 		Overrides: over,
 		Rename:    cs.Rename,
-		Codegen:   pluginCodegen(cs.Codegen),
-		Go:        pluginGoCode(cs.Go),
-		Json:      pluginJSONCode(cs.JSON),
+		Codegen:   pluginCodegen(cs, cs.Codegen),
 	}
 }
 
-func pluginCodegen(s config.Codegen) *plugin.Codegen {
+func pluginCodegen(cs config.CombinedSettings, s config.Codegen) *plugin.Codegen {
 	opts, err := convert.YAMLtoJSON(s.Options)
 	if err != nil {
 		panic(err)
 	}
-	return &plugin.Codegen{
+	cg := &plugin.Codegen{
 		Out:     s.Out,
 		Plugin:  s.Plugin,
 		Options: opts,
 	}
+	for _, p := range cs.Global.Plugins {
+		if p.Name == s.Plugin {
+			cg.Env = p.Env
+			cg.Process = pluginProcess(p)
+			cg.Wasm = pluginWASM(p)
+			return cg
+		}
+	}
+	return cg
 }
 
-func pluginGoCode(s config.SQLGo) *plugin.GoCode {
-	if s.QueryParameterLimit == nil {
-		s.QueryParameterLimit = new(int32)
-		*s.QueryParameterLimit = 1
+func pluginProcess(p config.Plugin) *plugin.Codegen_Process {
+	if p.Process != nil {
+		return &plugin.Codegen_Process{
+			Cmd: p.Process.Cmd,
+		}
 	}
+	return nil
+}
 
-	return &plugin.GoCode{
-		EmitInterface:               s.EmitInterface,
-		EmitJsonTags:                s.EmitJSONTags,
-		JsonTagsIdUppercase:         s.JsonTagsIDUppercase,
-		EmitDbTags:                  s.EmitDBTags,
-		EmitPreparedQueries:         s.EmitPreparedQueries,
-		EmitExactTableNames:         s.EmitExactTableNames,
-		EmitEmptySlices:             s.EmitEmptySlices,
-		EmitExportedQueries:         s.EmitExportedQueries,
-		EmitResultStructPointers:    s.EmitResultStructPointers,
-		EmitParamsStructPointers:    s.EmitParamsStructPointers,
-		EmitMethodsWithDbArgument:   s.EmitMethodsWithDBArgument,
-		EmitPointersForNullTypes:    s.EmitPointersForNullTypes,
-		EmitEnumValidMethod:         s.EmitEnumValidMethod,
-		EmitAllEnumValues:           s.EmitAllEnumValues,
-		JsonTagsCaseStyle:           s.JSONTagsCaseStyle,
-		Package:                     s.Package,
-		Out:                         s.Out,
-		SqlPackage:                  s.SQLPackage,
-		SqlDriver:                   s.SQLDriver,
-		OutputDbFileName:            s.OutputDBFileName,
-		OutputBatchFileName:         s.OutputBatchFileName,
-		OutputModelsFileName:        s.OutputModelsFileName,
-		OutputQuerierFileName:       s.OutputQuerierFileName,
-		OutputCopyfromFileName:      s.OutputCopyFromFileName,
-		OutputFilesSuffix:           s.OutputFilesSuffix,
-		InflectionExcludeTableNames: s.InflectionExcludeTableNames,
-		QueryParameterLimit:         s.QueryParameterLimit,
-		OmitUnusedStructs:           s.OmitUnusedStructs,
+func pluginWASM(p config.Plugin) *plugin.Codegen_WASM {
+	if p.WASM != nil {
+		return &plugin.Codegen_WASM{
+			Url:    p.WASM.URL,
+			Sha256: p.WASM.SHA256,
+		}
 	}
+	return nil
 }
 
 func pluginGoType(o config.Override) *plugin.ParsedGoType {
@@ -124,14 +112,6 @@ func pluginGoType(o config.Override) *plugin.ParsedGoType {
 		TypeName:   o.GoTypeName,
 		BasicType:  o.GoBasicType,
 		StructTags: o.GoStructTags,
-	}
-}
-
-func pluginJSONCode(s config.SQLJSON) *plugin.JSONCode {
-	return &plugin.JSONCode{
-		Out:      s.Out,
-		Indent:   s.Indent,
-		Filename: s.Filename,
 	}
 }
 
@@ -229,13 +209,13 @@ func pluginQueries(r *compiler.Result) []*plugin.Query {
 			}
 		}
 		out = append(out, &plugin.Query{
-			Name:            q.Name,
-			Cmd:             q.Cmd,
+			Name:            q.Metadata.Name,
+			Cmd:             q.Metadata.Cmd,
 			Text:            q.SQL,
-			Comments:        q.Comments,
+			Comments:        q.Metadata.Comments,
 			Columns:         columns,
 			Params:          params,
-			Filename:        q.Filename,
+			Filename:        q.Metadata.Filename,
 			InsertIntoTable: iit,
 		})
 	}

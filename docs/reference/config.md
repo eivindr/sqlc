@@ -1,12 +1,14 @@
 # Configuration
 
-The `sqlc` tool is configured via a `sqlc.yaml` or `sqlc.json` file. This
+The `sqlc` tool is configured via a `sqlc.(yaml|yml)` or `sqlc.json` file. This
 file must be in the directory where the `sqlc` command is run.
 
 ## Version 2
 
 ```yaml
 version: "2"
+cloud:
+  project: "<PROJECT_ID>"
 sql:
 - schema: "postgresql/schema.sql"
   queries: "postgresql/query.sql"
@@ -16,7 +18,7 @@ sql:
       package: "authors"
       out: "postgresql"
   database:
-    uri: "postgresql://postgres:postgres@localhost:5432/postgres"
+    managed: true
   rules:
     - sqlc/db-prepare
 - schema: "mysql/schema.sql"
@@ -46,6 +48,8 @@ Each mapping in the `sql` collection has the following keys:
   - A mapping to configure database connections. See [database](#database) for the supported keys.
 - `rules`:
   - A collection of rule names to run via `sqlc vet`. See [rules](#rules) for configuration options.
+- `analzyer`:
+  - A mapping to configure query analysis. See [analyzer](#analyzer) for the supported keys.
 - `strict_function_checks`
   - If true, return an error if a called SQL function does not exist. Defaults to `false`.
 
@@ -85,6 +89,8 @@ sql:
 
 The `database` mapping supports the following keys:
 
+- `managed`:
+  - If true, connect to a [managed database](../howto/managed-databases.md). Defaults to `false`.
 - `uri`:
   - Database connection URI
 
@@ -105,7 +111,14 @@ sql:
       package: authors
       out: postgresql
 ```
- 
+
+### analyzer
+
+The `analyzer` mapping supports the following keys:
+
+- `database`:
+  -  If false, do not use the configured database for query analysis. Defaults to `true`.
+  
 ### gen
 
 The `gen` mapping supports the following keys:
@@ -146,6 +159,8 @@ The `gen` mapping supports the following keys:
 - `emit_all_enum_values`:
   - If true, emit a function per enum type
     that returns all valid enum values.
+- `build_tags`:
+  - If set, add a `//go:build <build_tags>` directive at the beginning of each generated Go file.
 - `json_tags_id_uppercase`:
   - If true, "Id" in json tags will be uppercase. If false, will be camelcase. Defaults to `false`
 - `json_tags_case_style`:
@@ -171,9 +186,9 @@ The `gen` mapping supports the following keys:
 - `overrides`:
   - It is a collection of definitions that dictates which types are used to map a database types.
 
-##### `overrides`
+##### overrides
 
-See [Overriding types](../howto/overrides.md) for in-depth guide to using type overrides. Each mapping of the `overrides` collection has the following keys:
+See [Overriding types](../howto/overrides.md) for an in-depth guide to using type overrides. Each mapping of the `overrides` collection has the following keys:
 
 - `db_type`:
   - The PostgreSQL or MySQL type to override. Find the full list of supported types in [postgresql_type.go](https://github.com/sqlc-dev/sqlc/blob/main/internal/codegen/golang/postgresql_type.go#L12) or [mysql_type.go](https://github.com/sqlc-dev/sqlc/blob/main/internal/codegen/golang/mysql_type.go#L12). Note that for Postgres you must use the pg_catalog prefixed names where available. Can't be used if the `column` key is defined.
@@ -316,7 +331,7 @@ rules:
       query.cmd == "exec"
 ```
   
-### global overrides
+### Global overrides
 
 Sometimes, the same configuration must be done across various specifications of
 code generation.  Then a global definition for type overriding and field
@@ -389,6 +404,7 @@ packages:
     emit_pointers_for_null_types: false
     emit_enum_valid_method: false
     emit_all_enum_values: false
+    build_tags: "some_tag"
     json_tags_case_style: "camel"
     omit_unused_structs: false
     output_batch_file_name: "batch.go"
@@ -443,6 +459,8 @@ Each mapping in the `packages` collection has the following keys:
 - `emit_all_enum_values`:
   - If true, emit a function per enum type
     that returns all valid enum values.
+- `build_tags`:
+  - If set, add a `//go:build <build_tags>` directive at the beginning of each generated Go file.
 - `json_tags_case_style`:
   - `camel` for camelCase, `pascal` for PascalCase, `snake` for snake_case or `none` to use the column name in the DB. Defaults to `none`.
 - `omit_unused_structs`:

@@ -4,7 +4,7 @@
 database types to Go types. Choices for more complex types are described below.
 
 If you're unsatisfied with the default, you can override any type using the
-[overrides list](config.html#type-overriding) in your `sqlc` config file.
+[overrides list](./config.html#type-overriding) in your `sqlc` config file.
 
 ## Arrays
 
@@ -27,11 +27,15 @@ type Place struct {
 }
 ```
 
-## Dates and Time
+## Dates and times
 
-All PostgreSQL time and date types are returned as `time.Time` structs. For
+All date and time types are returned as `time.Time` structs. For
 null time or date values, the `NullTime` type from `database/sql` is used.
+
 The `pgx/v5` sql package uses the appropriate pgx types.
+
+For MySQL users relying on `github.com/go-sql-driver/mysql`, ensure that
+`parseTime=true` is added to your database connection string.
 
 ```sql
 CREATE TABLE authors (
