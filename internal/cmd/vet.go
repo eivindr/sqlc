@@ -334,7 +334,9 @@ type dbPreparer struct {
 
 func (p *dbPreparer) Prepare(ctx context.Context, name, query string) error {
 	s, err := p.db.PrepareContext(ctx, query)
-	s.Close()
+	if s != nil {
+		s.Close()
+	}
 	return err
 }
 
@@ -402,10 +404,6 @@ func (c *checker) fetchDatabaseUri(ctx context.Context, s config.SQL) (string, f
 		return uri, cleanup, err
 	}
 
-	if s.Engine != config.EnginePostgreSQL {
-		return "", cleanup, fmt.Errorf("managed: only PostgreSQL currently")
-	}
-
 	if c.Client == nil {
 		// FIXME: Eventual race condition
 		client, err := quickdb.NewClientFromConfig(c.Conf.Cloud)
@@ -429,7 +427,7 @@ func (c *checker) fetchDatabaseUri(ctx context.Context, s config.SQL) (string, f
 	}
 
 	resp, err := c.Client.CreateEphemeralDatabase(ctx, &pb.CreateEphemeralDatabaseRequest{
-		Engine:     "postgresql",
+		Engine:     string(s.Engine),
 		Region:     quickdb.GetClosestRegion(),
 		Migrations: ddl,
 	})
@@ -444,7 +442,19 @@ func (c *checker) fetchDatabaseUri(ctx context.Context, s config.SQL) (string, f
 		return err
 	}
 
-	return resp.Uri, cleanup, nil
+	var uri string
+	switch s.Engine {
+	case config.EngineMySQL:
+		dburi, err := quickdb.MySQLReformatURI(resp.Uri)
+		if err != nil {
+			return "", cleanup, fmt.Errorf("reformat uri: %w", err)
+		}
+		uri = dburi
+	default:
+		uri = resp.Uri
+	}
+
+	return uri, cleanup, nil
 }
 
 func (c *checker) DSN(dsn string) (string, error) {
@@ -627,7 +637,7 @@ func (c *checker) checkSQL(ctx context.Context, s config.SQL) error {
 	return nil
 }
 
-func vetConfig(req *plugin.CodeGenRequest) *vet.Config {
+func vetConfig(req *plugin.GenerateRequest) *vet.Config {
 	return &vet.Config{
 		Version: req.Settings.Version,
 		Engine:  req.Settings.Engine,

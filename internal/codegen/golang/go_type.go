@@ -3,16 +3,18 @@ package golang
 import (
 	"strings"
 
+	"github.com/sqlc-dev/sqlc/internal/codegen/golang/opts"
 	"github.com/sqlc-dev/sqlc/internal/codegen/sdk"
 	"github.com/sqlc-dev/sqlc/internal/plugin"
 )
 
-func addExtraGoStructTags(tags map[string]string, req *plugin.CodeGenRequest, col *plugin.Column) {
-	for _, oride := range req.Settings.Overrides {
+func addExtraGoStructTags(tags map[string]string, req *plugin.GenerateRequest, options *opts.Options, col *plugin.Column) {
+	for _, override := range options.Overrides {
+		oride := override.ShimOverride
 		if oride.GoType.StructTags == nil {
 			continue
 		}
-		if !sdk.Matches(oride, col.Table, req.Catalog.DefaultSchema) {
+		if !override.Matches(col.Table, req.Catalog.DefaultSchema) {
 			// Different table.
 			continue
 		}
@@ -31,9 +33,11 @@ func addExtraGoStructTags(tags map[string]string, req *plugin.CodeGenRequest, co
 	}
 }
 
-func goType(req *plugin.CodeGenRequest, options *opts, col *plugin.Column) string {
+func goType(req *plugin.GenerateRequest, options *opts.Options, col *plugin.Column) string {
 	// Check if the column's type has been overridden
-	for _, oride := range req.Settings.Overrides {
+	for _, override := range options.Overrides {
+		oride := override.ShimOverride
+
 		if oride.GoType.TypeName == "" {
 			continue
 		}
@@ -41,7 +45,7 @@ func goType(req *plugin.CodeGenRequest, options *opts, col *plugin.Column) strin
 		if col.OriginalName != "" {
 			cname = col.OriginalName
 		}
-		sameTable := sdk.Matches(oride, col.Table, req.Catalog.DefaultSchema)
+		sameTable := override.Matches(col.Table, req.Catalog.DefaultSchema)
 		if oride.Column != "" && sdk.MatchString(oride.ColumnName, cname) && sameTable {
 			if col.IsSqlcSlice {
 				return "[]" + oride.GoType.TypeName
@@ -59,12 +63,13 @@ func goType(req *plugin.CodeGenRequest, options *opts, col *plugin.Column) strin
 	return typ
 }
 
-func goInnerType(req *plugin.CodeGenRequest, options *opts, col *plugin.Column) string {
+func goInnerType(req *plugin.GenerateRequest, options *opts.Options, col *plugin.Column) string {
 	columnType := sdk.DataType(col.Type)
 	notNull := col.NotNull || col.IsArray
 
 	// package overrides have a higher precedence
-	for _, oride := range req.Settings.Overrides {
+	for _, override := range options.Overrides {
+		oride := override.ShimOverride
 		if oride.GoType.TypeName == "" {
 			continue
 		}
@@ -76,7 +81,7 @@ func goInnerType(req *plugin.CodeGenRequest, options *opts, col *plugin.Column) 
 	// TODO: Extend the engine interface to handle types
 	switch req.Settings.Engine {
 	case "mysql":
-		return mysqlType(req, col)
+		return mysqlType(req, options, col)
 	case "postgresql":
 		return postgresType(req, options, col)
 	case "sqlite":

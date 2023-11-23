@@ -10,6 +10,7 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/sqlc-dev/sqlc/internal/codegen/golang/opts"
 	"github.com/sqlc-dev/sqlc/internal/codegen/sdk"
 	"github.com/sqlc-dev/sqlc/internal/metadata"
 	"github.com/sqlc-dev/sqlc/internal/plugin"
@@ -102,13 +103,13 @@ func (t *tmplCtx) codegenQueryRetval(q Query) (string, error) {
 	}
 }
 
-func Generate(ctx context.Context, req *plugin.CodeGenRequest) (*plugin.CodeGenResponse, error) {
-	options, err := parseOpts(req)
+func Generate(ctx context.Context, req *plugin.GenerateRequest) (*plugin.GenerateResponse, error) {
+	options, err := opts.Parse(req)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := validateOpts(options); err != nil {
+	if err := opts.ValidateOpts(options); err != nil {
 		return nil, err
 	}
 
@@ -123,16 +124,46 @@ func Generate(ctx context.Context, req *plugin.CodeGenRequest) (*plugin.CodeGenR
 		enums, structs = filterUnusedStructs(enums, structs, queries)
 	}
 
+	if err := validate(options, enums, structs, queries); err != nil {
+		return nil, err
+	}
+
 	return generate(req, options, enums, structs, queries)
 }
 
-func generate(req *plugin.CodeGenRequest, options *opts, enums []Enum, structs []Struct, queries []Query) (*plugin.CodeGenResponse, error) {
+func validate(options *opts.Options, enums []Enum, structs []Struct, queries []Query) error {
+	enumNames := make(map[string]struct{})
+	for _, enum := range enums {
+		enumNames[enum.Name] = struct{}{}
+		enumNames["Null"+enum.Name] = struct{}{}
+	}
+	structNames := make(map[string]struct{})
+	for _, struckt := range structs {
+		if _, ok := enumNames[struckt.Name]; ok {
+			return fmt.Errorf("struct name conflicts with enum name: %s", struckt.Name)
+		}
+		structNames[struckt.Name] = struct{}{}
+	}
+	if !options.EmitExportedQueries {
+		return nil
+	}
+	for _, query := range queries {
+		if _, ok := enumNames[query.ConstantName]; ok {
+			return fmt.Errorf("query constant name conflicts with enum name: %s", query.ConstantName)
+		}
+		if _, ok := structNames[query.ConstantName]; ok {
+			return fmt.Errorf("query constant name conflicts with struct name: %s", query.ConstantName)
+		}
+	}
+	return nil
+}
+
+func generate(req *plugin.GenerateRequest, options *opts.Options, enums []Enum, structs []Struct, queries []Query) (*plugin.GenerateResponse, error) {
 	i := &importer{
-		Settings: req.Settings,
-		Options:  options,
-		Queries:  queries,
-		Enums:    enums,
-		Structs:  structs,
+		Options: options,
+		Queries: queries,
+		Enums:   enums,
+		Structs: structs,
 	}
 
 	tctx := tmplCtx{
@@ -282,7 +313,7 @@ func generate(req *plugin.CodeGenRequest, options *opts, enums []Enum, structs [
 			return nil, err
 		}
 	}
-	resp := plugin.CodeGenResponse{}
+	resp := plugin.GenerateResponse{}
 
 	for filename, code := range output {
 		resp.Files = append(resp.Files, &plugin.File{

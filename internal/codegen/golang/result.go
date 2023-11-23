@@ -5,13 +5,14 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/sqlc-dev/sqlc/internal/codegen/golang/opts"
 	"github.com/sqlc-dev/sqlc/internal/codegen/sdk"
 	"github.com/sqlc-dev/sqlc/internal/inflection"
 	"github.com/sqlc-dev/sqlc/internal/metadata"
 	"github.com/sqlc-dev/sqlc/internal/plugin"
 )
 
-func buildEnums(req *plugin.CodeGenRequest, options *opts) []Enum {
+func buildEnums(req *plugin.GenerateRequest, options *opts.Options) []Enum {
 	var enums []Enum
 	for _, schema := range req.Catalog.Schemas {
 		if schema.Name == "pg_catalog" || schema.Name == "information_schema" {
@@ -26,7 +27,7 @@ func buildEnums(req *plugin.CodeGenRequest, options *opts) []Enum {
 			}
 
 			e := Enum{
-				Name:      StructName(enumName, req.Settings),
+				Name:      StructName(enumName, options),
 				Comment:   enum.Comment,
 				NameTags:  map[string]string{},
 				ValidTags: map[string]string{},
@@ -43,7 +44,7 @@ func buildEnums(req *plugin.CodeGenRequest, options *opts) []Enum {
 					value = fmt.Sprintf("value_%d", i)
 				}
 				e.Constants = append(e.Constants, Constant{
-					Name:  StructName(enumName+"_"+value, req.Settings),
+					Name:  StructName(enumName+"_"+value, options),
 					Value: v,
 					Type:  e.Name,
 				})
@@ -58,7 +59,7 @@ func buildEnums(req *plugin.CodeGenRequest, options *opts) []Enum {
 	return enums
 }
 
-func buildStructs(req *plugin.CodeGenRequest, options *opts) []Struct {
+func buildStructs(req *plugin.GenerateRequest, options *opts.Options) []Struct {
 	var structs []Struct
 	for _, schema := range req.Catalog.Schemas {
 		if schema.Name == "pg_catalog" || schema.Name == "information_schema" {
@@ -80,7 +81,7 @@ func buildStructs(req *plugin.CodeGenRequest, options *opts) []Struct {
 			}
 			s := Struct{
 				Table:   &plugin.Identifier{Schema: schema.Name, Name: table.Rel.Name},
-				Name:    StructName(structName, req.Settings),
+				Name:    StructName(structName, options),
 				Comment: table.Comment,
 			}
 			for _, column := range table.Columns {
@@ -91,9 +92,9 @@ func buildStructs(req *plugin.CodeGenRequest, options *opts) []Struct {
 				if options.EmitJsonTags {
 					tags["json"] = JSONTagName(column.Name, options)
 				}
-				addExtraGoStructTags(tags, req, column)
+				addExtraGoStructTags(tags, req, options, column)
 				s.Fields = append(s.Fields, Field{
-					Name:    StructName(column.Name, req.Settings),
+					Name:    StructName(column.Name, options),
 					Type:    goType(req, options, column),
 					Tags:    tags,
 					Comment: column.Comment,
@@ -181,7 +182,7 @@ func argName(name string) string {
 	return out
 }
 
-func buildQueries(req *plugin.CodeGenRequest, options *opts, structs []Struct) ([]Query, error) {
+func buildQueries(req *plugin.GenerateRequest, options *opts.Options, structs []Struct) ([]Query, error) {
 	qs := make([]Query, 0, len(req.Queries))
 	for _, query := range req.Queries {
 		if query.Name == "" {
@@ -267,7 +268,7 @@ func buildQueries(req *plugin.CodeGenRequest, options *opts, structs []Struct) (
 				same := true
 				for i, f := range s.Fields {
 					c := query.Columns[i]
-					sameName := f.Name == StructName(columnName(c, i), req.Settings)
+					sameName := f.Name == StructName(columnName(c, i), options)
 					sameType := f.Type == goType(req, options, c)
 					sameTable := sdk.SameTableName(c.Table, s.Table, req.Catalog.DefaultSchema)
 					if !sameName || !sameType || !sameTable {
@@ -311,16 +312,16 @@ func buildQueries(req *plugin.CodeGenRequest, options *opts, structs []Struct) (
 	return qs, nil
 }
 
+var cmdReturnsData = map[string]struct{}{
+	metadata.CmdBatchMany: {},
+	metadata.CmdBatchOne:  {},
+	metadata.CmdMany:      {},
+	metadata.CmdOne:       {},
+}
+
 func putOutColumns(query *plugin.Query) bool {
-	if len(query.Columns) > 0 {
-		return true
-	}
-	for _, allowed := range []string{metadata.CmdMany, metadata.CmdOne, metadata.CmdBatchMany} {
-		if query.Cmd == allowed {
-			return true
-		}
-	}
-	return false
+	_, found := cmdReturnsData[query.Cmd]
+	return found
 }
 
 // It's possible that this method will generate duplicate JSON tag values
@@ -331,7 +332,7 @@ func putOutColumns(query *plugin.Query) bool {
 // JSON tags: count, count_2, count_2
 //
 // This is unlikely to happen, so don't fix it yet
-func columnsToStruct(req *plugin.CodeGenRequest, options *opts, name string, columns []goColumn, useID bool) (*Struct, error) {
+func columnsToStruct(req *plugin.GenerateRequest, options *opts.Options, name string, columns []goColumn, useID bool) (*Struct, error) {
 	gs := Struct{
 		Name: name,
 	}
@@ -347,7 +348,7 @@ func columnsToStruct(req *plugin.CodeGenRequest, options *opts, name string, col
 			tagName = SetCaseStyle(colName, "snake")
 		}
 
-		fieldName := StructName(colName, req.Settings)
+		fieldName := StructName(colName, options)
 		baseFieldName := fieldName
 		// Track suffixes by the ID of the column, so that columns referring to the same numbered parameter can be
 		// reused.
@@ -369,7 +370,7 @@ func columnsToStruct(req *plugin.CodeGenRequest, options *opts, name string, col
 		if options.EmitJsonTags {
 			tags["json"] = JSONTagName(tagName, options)
 		}
-		addExtraGoStructTags(tags, req, c.Column)
+		addExtraGoStructTags(tags, req, options, c.Column)
 		f := Field{
 			Name:   fieldName,
 			DBName: colName,
