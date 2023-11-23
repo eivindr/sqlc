@@ -21,9 +21,13 @@
             {{.MethodName}}(ctx context.Context, {{.Arg.Pair}}) ([]{{.Ret.DefineType}}, error)
         {{- end}}
         {{- if and (eq .Cmd ":iter") ($dbtxParam) }}
-            {{.MethodName}}(ctx context.Context, db DBTX, iter func({{.Ret.Name}} {{.Ret.Type}}) error, {{.Arg.Pair}}) (error)
+            {{range .Comments}}//{{.}}
+            {{end -}}
+            {{.MethodName}}(ctx context.Context, db DBTX, iter func({{.Ret.Name}} {{.Ret.DefineType}}) error, {{.Arg.Pair}}) (error)
         {{- else if eq .Cmd ":iter"}}
-            {{.MethodName}}(ctx context.Context, iter func({{.Ret.Name}} {{.Ret.Type}}) error, {{.Arg.Pair}}) (error)
+            {{range .Comments}}//{{.}}
+            {{end -}}
+            {{.MethodName}}(ctx context.Context, iter func({{.Ret.Name}} {{.Ret.DefineType}}) error, {{.Arg.Pair}}) (error)
         {{- end}}
         {{- if and (eq .Cmd ":exec") ($dbtxParam) }}
             {{range .Comments}}//{{.}}
