@@ -6,6 +6,7 @@ import (
 	"os"
 	osexec "os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -16,7 +17,22 @@ import (
 	"github.com/sqlc-dev/sqlc/internal/cmd"
 	"github.com/sqlc-dev/sqlc/internal/config"
 	"github.com/sqlc-dev/sqlc/internal/opts"
+	"github.com/sqlc-dev/sqlc/internal/sqltest/local"
 )
+
+func lineEndings() cmp.Option {
+	return cmp.Transformer("LineEndings", func(in string) string {
+		// Replace Windows new lines with Unix newlines
+		return strings.Replace(in, "\r\n", "\n", -1)
+	})
+}
+
+func stderrTransformer() cmp.Option {
+	return cmp.Transformer("Stderr", func(in string) string {
+		s := strings.Replace(in, "\r", "", -1)
+		return strings.Replace(s, "\\", "/", -1)
+	})
+}
 
 func TestExamples(t *testing.T) {
 	t.Parallel()
@@ -84,7 +100,7 @@ func BenchmarkExamples(b *testing.B) {
 }
 
 type textContext struct {
-	Mutate  func(*config.Config)
+	Mutate  func(*testing.T, string) func(*config.Config)
 	Enabled func() bool
 }
 
@@ -98,20 +114,49 @@ func TestReplay(t *testing.T) {
 
 	contexts := map[string]textContext{
 		"base": {
-			Mutate:  func(c *config.Config) {},
+			Mutate:  func(t *testing.T, path string) func(*config.Config) { return func(c *config.Config) {} },
 			Enabled: func() bool { return true },
 		},
 		"managed-db": {
-			Mutate: func(c *config.Config) {
-				c.Cloud.Project = "01HAQMMECEYQYKFJN8MP16QC41" // TODO: Read from environment
-				for i := range c.SQL {
-					c.SQL[i].Database = &config.Database{
-						Managed: true,
+			Mutate: func(t *testing.T, path string) func(*config.Config) {
+				return func(c *config.Config) {
+					c.Cloud.Project = "01HAQMMECEYQYKFJN8MP16QC41" // TODO: Read from environment
+					for i := range c.SQL {
+						files := []string{}
+						for _, s := range c.SQL[i].Schema {
+							files = append(files, filepath.Join(path, s))
+						}
+						switch c.SQL[i].Engine {
+						case config.EnginePostgreSQL:
+							uri := local.PostgreSQL(t, files)
+							c.SQL[i].Database = &config.Database{
+								URI: uri,
+							}
+						// case config.EngineMySQL:
+						// 	uri := local.MySQL(t, files)
+						// 	c.SQL[i].Database = &config.Database{
+						// 		URI: uri,
+						// 	}
+						default:
+							c.SQL[i].Database = &config.Database{
+								Managed: true,
+							}
+						}
 					}
 				}
 			},
 			Enabled: func() bool {
-				return len(os.Getenv("SQLC_AUTH_TOKEN")) > 0
+				// Return false if no auth token exists
+				if len(os.Getenv("SQLC_AUTH_TOKEN")) == 0 {
+					return false
+				}
+				if len(os.Getenv("POSTGRESQL_SERVER_URI")) == 0 {
+					return false
+				}
+				// if len(os.Getenv("MYSQL_SERVER_URI")) == 0 {
+				// 	return false
+				// }
+				return true
 			},
 		},
 	}
@@ -153,13 +198,19 @@ func TestReplay(t *testing.T) {
 					}
 				}
 
+				if len(args.OS) > 0 {
+					if !slices.Contains(args.OS, runtime.GOOS) {
+						t.Skipf("unsupported os: %s", runtime.GOOS)
+					}
+				}
+
 				opts := cmd.Options{
 					Env: cmd.Env{
 						Debug:    opts.DebugFromString(args.Env["SQLCDEBUG"]),
 						NoRemote: true,
 					},
 					Stderr:       &stderr,
-					MutateConfig: testctx.Mutate,
+					MutateConfig: testctx.Mutate(t, path),
 				}
 
 				switch args.Command {
@@ -180,7 +231,11 @@ func TestReplay(t *testing.T) {
 					t.Fatalf("sqlc %s failed: %s", args.Command, stderr.String())
 				}
 
-				diff := cmp.Diff(strings.TrimSpace(expected), strings.TrimSpace(stderr.String()))
+				diff := cmp.Diff(
+					strings.TrimSpace(expected),
+					strings.TrimSpace(stderr.String()),
+					stderrTransformer(),
+				)
 				if diff != "" {
 					t.Fatalf("stderr differed (-want +got):\n%s", diff)
 				}
@@ -233,7 +288,12 @@ func cmpDirectory(t *testing.T, dir string, actual map[string]string) {
 		t.Fatal(err)
 	}
 
-	if !cmp.Equal(expected, actual, cmpopts.EquateEmpty()) {
+	opts := []cmp.Option{
+		cmpopts.EquateEmpty(),
+		lineEndings(),
+	}
+
+	if !cmp.Equal(expected, actual, opts...) {
 		t.Errorf("%s contents differ", dir)
 		for name, contents := range expected {
 			name := name
@@ -241,7 +301,7 @@ func cmpDirectory(t *testing.T, dir string, actual map[string]string) {
 				t.Errorf("%s is empty", name)
 				return
 			}
-			if diff := cmp.Diff(contents, actual[name]); diff != "" {
+			if diff := cmp.Diff(contents, actual[name], opts...); diff != "" {
 				t.Errorf("%s differed (-want +got):\n%s", name, diff)
 			}
 		}

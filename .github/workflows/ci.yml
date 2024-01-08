@@ -5,35 +5,28 @@ on:
       - main
   pull_request:
 jobs:
-  windows-build:
-    if: ${{ github.ref == 'refs/heads/main' }}
-    runs-on: windows-latest
-    steps:
-    - uses: actions/checkout@v4
-    - uses: actions/setup-go@v4
-      with:
-        go-version-file: go.mod
-        check-latest: true
-    - run: go build ./...
-
-  darwin-build:
-    if: ${{ github.ref == 'refs/heads/main' }}
-    runs-on: macos-latest
-    steps:
-    - uses: actions/checkout@v4
-    - uses: actions/setup-go@v4
-      with:
-        go-version-file: go.mod
-        check-latest: true
-    - run: go build ./...
-
-  build:
-    name: test
-    runs-on: ubuntu-latest
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        cgo: ['1', '0']
+        # Workaround no native support for conditional matrix items
+        # https://github.com/orgs/community/discussions/26253#discussioncomment-6745038
+        isMain:
+          - ${{ github.ref == 'refs/heads/main' }}
+        exclude:
+          - isMain: false
+        include:
+        - os: ubuntu-latest
+          cgo: '1'
+        - os: ubuntu-latest
+          cgo: '0'
+    name: test ${{ matrix.os }} cgo=${{ matrix.cgo }}
+    runs-on: ${{ matrix.os }}
 
     steps:
     - uses: actions/checkout@v4
-    - uses: actions/setup-go@v4
+    - uses: actions/setup-go@v5
       with:
         go-version-file: go.mod
         check-latest: true
@@ -46,10 +39,25 @@ jobs:
 
     - name: install ./...
       run: go install ./...
+      env:
+        CGO_ENABLED: ${{ matrix.cgo }}
 
     - name: build internal/endtoend
       run: go build ./...
       working-directory: internal/endtoend/testdata
+      env:
+        CGO_ENABLED: ${{ matrix.cgo }}
+
+    # Start a PostgreSQL server
+    - uses: sqlc-dev/action-setup-postgres@master
+      with:
+        postgres-version: "16"
+      id: postgres
+
+    # Start a MySQL server
+    - uses: shogo82148/actions-setup-mysql@v1
+      with:
+        mysql-version: "8.1"
 
     - name: test ./...
       run: gotestsum --junitfile junit.xml -- --tags=examples -timeout 20m ./...
@@ -57,6 +65,9 @@ jobs:
         CI_SQLC_PROJECT_ID: ${{ secrets.CI_SQLC_PROJECT_ID }}
         CI_SQLC_AUTH_TOKEN: ${{ secrets.CI_SQLC_AUTH_TOKEN }}
         SQLC_AUTH_TOKEN: ${{ secrets.CI_SQLC_AUTH_TOKEN }}
+        MYSQL_SERVER_URI: root:@tcp(localhost:3306)/mysql?multiStatements=true&parseTime=true
+        POSTGRESQL_SERVER_URI: ${{ steps.postgres.outputs.connection-uri }}?sslmode=disable
+        CGO_ENABLED: ${{ matrix.cgo }}
 
   vuln_check:
     runs-on: ubuntu-latest
@@ -64,7 +75,7 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
-    - uses: actions/setup-go@v4
+    - uses: actions/setup-go@v5
       with:
         go-version-file: go.mod
         check-latest: true
