@@ -47,7 +47,7 @@ Also note that if the iter function return an error, the streaming query will cl
 
 ### Building this fork
 
-Clone and run `go build ./cmd/sqlc/main.go` from the project root.
+Clone and run `CGO_ENABLED=0 go build ./cmd/sqlc/main.go` from the project root.
 
 ## Overview
 
@@ -57,6 +57,15 @@ Clone and run `go build ./cmd/sqlc/main.go` from the project root.
 - [Website](https://sqlc.dev)
 - [Downloads](https://downloads.sqlc.dev/)
 - [Community](https://discord.gg/EcXzGe5SEs)
+
+## Supported languages
+
+- [sqlc-gen-go](https://github.com/sqlc-dev/sqlc-gen-go)
+- [sqlc-gen-kotlin](https://github.com/sqlc-dev/sqlc-gen-kotlin)
+- [sqlc-gen-python](https://github.com/sqlc-dev/sqlc-gen-python)
+- [sqlc-gen-typescript](https://github.com/sqlc-dev/sqlc-gen-typescript)
+
+Additional languages can be added via [plugins](https://docs.sqlc.dev/en/latest/reference/language-support.html#community-language-support).
 
 ## Acknowledgments
 
